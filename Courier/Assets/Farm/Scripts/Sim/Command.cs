@@ -1,0 +1,385 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+
+namespace Farm.Sim
+{
+    /// <summary>
+    /// The bot instruction set. Each command takes at least one tick; some take longer
+    /// (see <see cref="Balance"/> durations; Go to takes one tick per tile walked). Run is free.
+    /// </summary>
+    public enum CommandType
+    {
+        GoTo,
+        Step,
+        Grab,
+        Till,
+        Plant,
+        Water,
+        Harvest,
+        Ship,
+        Wait,
+
+        /// <summary>Run a custom command (from the command library), then carry on.</summary>
+        Run,
+    }
+
+    /// <summary>Where a Go to command heads. Well/Bin/Shed mean "the nearest tile next to it".</summary>
+    public enum GoTarget
+    {
+        Well,
+        Tile,
+        Bin,
+        Shed,
+        Home,
+    }
+
+    public enum CommandResult
+    {
+        None,
+        Ok,
+        Idle,
+
+        /// <summary>Partway through a task that takes several ticks.</summary>
+        Working,
+
+        // Soft results: nothing wrong with the routine, there just wasn't anything to do.
+        AlreadyDone,
+        NotRipe,
+        NothingHere,
+        NothingToShip,
+        OutOfStock,
+
+        // Hard results: the routine is probably wrong.
+        Blocked,
+        NoPath,
+        NotAtSource,
+        NotAtBin,
+        NotFarmland,
+        NotTilled,
+        NoSeeds,
+        NoWater,
+        LoadFull,
+        UnknownCommand,
+        TooDeep,
+    }
+
+    [Serializable]
+    public struct Command : IEquatable<Command>
+    {
+        public CommandType Type;
+
+        /// <summary>Go to: where.</summary>
+        public GoTarget Target;
+
+        /// <summary>Go to (Tile): the tile picked on the map.</summary>
+        public Cell Tile;
+
+        /// <summary>Step: which way.</summary>
+        public Facing Dir;
+
+        /// <summary>Grab: what. Plant: which seed (None = any seed carried).</summary>
+        public Item Item;
+
+        /// <summary>Grab: how many.</summary>
+        public int Count;
+
+        /// <summary>Run: the custom command's id in the <see cref="CommandLibrary"/>.</summary>
+        public int MacroId;
+
+        public bool IsRun => Type == CommandType.Run;
+
+        /// <summary>Commands with an option you cycle by clicking the block.</summary>
+        public bool HasOptions => Type == CommandType.GoTo || Type == CommandType.Step || Type == CommandType.Grab || Type == CommandType.Plant;
+
+        public bool HasCount => Type == CommandType.Grab;
+        public bool NeedsTile => Type == CommandType.GoTo && Target == GoTarget.Tile;
+
+        static readonly Item[] s_GrabItems = { Item.Water, Item.ParsnipSeeds, Item.PotatoSeeds, Item.CauliflowerSeeds };
+        static readonly Item[] s_PlantItems = { Item.None, Item.ParsnipSeeds, Item.PotatoSeeds, Item.CauliflowerSeeds };
+
+        /// <summary>The same command with its next option (target, direction, item or seed).</summary>
+        public Command WithNextOption()
+        {
+            var c = this;
+            switch (Type)
+            {
+                case CommandType.GoTo: c.Target = (GoTarget)(((int)Target + 1) % 5); break;
+                case CommandType.Step: c.Dir = Dir.TurnRight(); break;
+                case CommandType.Grab: c.Item = Next(s_GrabItems, Item); break;
+                case CommandType.Plant: c.Item = Next(s_PlantItems, Item); break;
+            }
+            return c;
+        }
+
+        public Command WithCount(int count)
+        {
+            var c = this;
+            c.Count = Math.Max(1, Math.Min(Balance.MaxGrab, count));
+            return c;
+        }
+
+        public Command WithTile(Cell tile)
+        {
+            var c = this;
+            c.Target = GoTarget.Tile;
+            c.Tile = tile;
+            return c;
+        }
+
+        static Item Next(Item[] cycle, Item current)
+        {
+            int i = Array.IndexOf(cycle, current);
+            return cycle[(i + 1) % cycle.Length];
+        }
+
+        // Factories
+        public static Command GoTo(GoTarget target) => new Command { Type = CommandType.GoTo, Target = target };
+        public static Command GoToTile(int x, int y) => new Command { Type = CommandType.GoTo, Target = GoTarget.Tile, Tile = new Cell(x, y) };
+        public static Command Step(Facing dir) => new Command { Type = CommandType.Step, Dir = dir };
+        public static Command Grab(Item item, int count) => new Command { Type = CommandType.Grab, Item = item, Count = count };
+        public static Command Till => new Command { Type = CommandType.Till };
+        public static Command Plant(Item seed = Item.None) => new Command { Type = CommandType.Plant, Item = seed };
+        public static Command Water => new Command { Type = CommandType.Water };
+        public static Command Harvest => new Command { Type = CommandType.Harvest };
+        public static Command Ship => new Command { Type = CommandType.Ship };
+        public static Command Wait => new Command { Type = CommandType.Wait };
+        public static Command Run(Macro macro) => new Command { Type = CommandType.Run, MacroId = macro.Id };
+        public static Command Run(int macroId) => new Command { Type = CommandType.Run, MacroId = macroId };
+
+        /// <summary>A fresh block as it comes out of the palette.</summary>
+        public static Command Default(CommandType t)
+        {
+            switch (t)
+            {
+                case CommandType.GoTo: return GoTo(GoTarget.Well);
+                case CommandType.Step: return Step(Facing.East);
+                case CommandType.Grab: return Grab(Item.Water, 5);
+                default: return new Command { Type = t };
+            }
+        }
+
+        public bool Equals(Command o) =>
+            Type == o.Type && Target == o.Target && Tile == o.Tile && Dir == o.Dir && Item == o.Item && Count == o.Count && MacroId == o.MacroId;
+
+        public override bool Equals(object obj) => obj is Command c && Equals(c);
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                int h = (int)Type;
+                h = h * 31 + (int)Target;
+                h = h * 31 + Tile.GetHashCode();
+                h = h * 31 + (int)Dir;
+                h = h * 31 + (int)Item;
+                h = h * 31 + Count;
+                h = h * 31 + MacroId;
+                return h;
+            }
+        }
+
+        public override string ToString() => CommandInfo.Label(this, null);
+    }
+
+    /// <summary>Display text and timings for commands and results. Shared by tests and UI.</summary>
+    public static class CommandInfo
+    {
+        public static readonly CommandType[] PaletteOrder =
+        {
+            CommandType.GoTo, CommandType.Step,
+            CommandType.Grab, CommandType.Till,
+            CommandType.Plant, CommandType.Water,
+            CommandType.Harvest, CommandType.Ship,
+            CommandType.Wait,
+        };
+
+        /// <summary>Ticks a task takes. Go to is one tick per tile walked.</summary>
+        public static int Duration(CommandType t)
+        {
+            switch (t)
+            {
+                case CommandType.Till: return Balance.TillTicks;
+                case CommandType.Plant: return Balance.PlantTicks;
+                case CommandType.Water: return Balance.WaterTicks;
+                case CommandType.Harvest: return Balance.HarvestTicks;
+                case CommandType.Grab: return Balance.GrabTicks;
+                case CommandType.Ship: return Balance.ShipTicks;
+                case CommandType.Run: return 0;
+                default: return 1;
+            }
+        }
+
+        public static string Name(CommandType t)
+        {
+            switch (t)
+            {
+                case CommandType.GoTo: return "Go to";
+                case CommandType.Step: return "Step";
+                case CommandType.Grab: return "Grab";
+                case CommandType.Till: return "Till soil";
+                case CommandType.Plant: return "Plant";
+                case CommandType.Water: return "Water";
+                case CommandType.Harvest: return "Harvest";
+                case CommandType.Ship: return "Ship";
+                case CommandType.Wait: return "Wait";
+                case CommandType.Run: return "Run";
+                default: return t.ToString();
+            }
+        }
+
+        public static string TargetName(GoTarget t, Cell tile)
+        {
+            switch (t)
+            {
+                case GoTarget.Well: return "well";
+                case GoTarget.Bin: return "shipping bin";
+                case GoTarget.Shed: return "seed shed";
+                case GoTarget.Home: return "home";
+                default: return $"tile {tile.X},{tile.Y}";
+            }
+        }
+
+        /// <summary>The option part of a command, e.g. "well", "east", "5 water", "any seed".</summary>
+        public static string Option(Command c)
+        {
+            switch (c.Type)
+            {
+                case CommandType.GoTo: return TargetName(c.Target, c.Tile);
+                case CommandType.Step: return c.Dir.ToString().ToLowerInvariant();
+                case CommandType.Grab: return $"{c.Count} {ItemInfo.Name(c.Item, c.Count)}";
+                case CommandType.Plant: return c.Item == Item.None ? "any seed" : (Crops.ForSeed(c.Item)?.Name.ToLowerInvariant() ?? "?");
+                default: return null;
+            }
+        }
+
+        public static string Label(Command c, CommandLibrary library)
+        {
+            if (c.IsRun)
+            {
+                var m = library?.Get(c.MacroId);
+                return m != null ? "Run: " + m.Name : "Run: (missing command)";
+            }
+            var opt = Option(c);
+            return opt == null ? Name(c.Type) : $"{Name(c.Type)} {opt}";
+        }
+
+        public static bool IsProblem(CommandResult r) => r >= CommandResult.AlreadyDone;
+        public static bool IsHardProblem(CommandResult r) => r >= CommandResult.Blocked;
+
+        public static string Describe(CommandResult r)
+        {
+            switch (r)
+            {
+                case CommandResult.Ok: return "OK";
+                case CommandResult.Idle: return "Idle";
+                case CommandResult.Working: return "Working...";
+                case CommandResult.AlreadyDone: return "Already done";
+                case CommandResult.NotRipe: return "Not ripe yet";
+                case CommandResult.NothingHere: return "Nothing growing here";
+                case CommandResult.NothingToShip: return "No produce to ship";
+                case CommandResult.OutOfStock: return "Seed shed is out of those";
+                case CommandResult.Blocked: return "Blocked";
+                case CommandResult.NoPath: return "Can't get there";
+                case CommandResult.NotAtSource: return "Not next to the well/pond or shed";
+                case CommandResult.NotAtBin: return "Not next to the shipping bin";
+                case CommandResult.NotFarmland: return "Can't till here - not farmland";
+                case CommandResult.NotTilled: return "Soil isn't tilled";
+                case CommandResult.NoSeeds: return "Not carrying seeds";
+                case CommandResult.NoWater: return "Out of water";
+                case CommandResult.LoadFull: return "Load too heavy";
+                case CommandResult.UnknownCommand: return "That custom command no longer exists";
+                case CommandResult.TooDeep: return "Custom commands nested too deeply";
+                default: return "";
+            }
+        }
+    }
+
+    /// <summary>An ordered list of commands: a bot's daily routine or a custom command's body.</summary>
+    public sealed class Routine : IReadOnlyList<Command>
+    {
+        public const int MaxLength = 64;
+
+        readonly List<Command> _commands = new List<Command>();
+
+        public event Action Changed;
+
+        public int Count => _commands.Count;
+        public Command this[int index] => _commands[index];
+        public bool IsFull => _commands.Count >= MaxLength;
+
+        public bool Insert(int index, Command c)
+        {
+            if (IsFull) return false;
+            index = Math.Max(0, Math.Min(index, _commands.Count));
+            _commands.Insert(index, c);
+            Changed?.Invoke();
+            return true;
+        }
+
+        public bool Add(Command c) => Insert(_commands.Count, c);
+
+        public void RemoveAt(int index)
+        {
+            if (index < 0 || index >= _commands.Count) return;
+            _commands.RemoveAt(index);
+            Changed?.Invoke();
+        }
+
+        public void Set(int index, Command c)
+        {
+            if (index < 0 || index >= _commands.Count) return;
+            _commands[index] = c;
+            Changed?.Invoke();
+        }
+
+        /// <summary>Move using a drag-and-drop "insertion point" measured before removal (0..Count).</summary>
+        public void MoveToInsertionPoint(int from, int insertionPoint)
+        {
+            if (from < 0 || from >= _commands.Count) return;
+            insertionPoint = Math.Max(0, Math.Min(insertionPoint, _commands.Count));
+            int to = insertionPoint > from ? insertionPoint - 1 : insertionPoint;
+            if (to == from) return;
+            var c = _commands[from];
+            _commands.RemoveAt(from);
+            _commands.Insert(to, c);
+            Changed?.Invoke();
+        }
+
+        public int RemoveAll(Predicate<Command> match)
+        {
+            int n = _commands.RemoveAll(match);
+            if (n > 0) Changed?.Invoke();
+            return n;
+        }
+
+        public void Clear()
+        {
+            if (_commands.Count == 0) return;
+            _commands.Clear();
+            Changed?.Invoke();
+        }
+
+        public void SetAll(IEnumerable<Command> commands)
+        {
+            var copy = new List<Command>(commands);
+            _commands.Clear();
+            foreach (var c in copy)
+            {
+                if (_commands.Count >= MaxLength) break;
+                _commands.Add(c);
+            }
+            Changed?.Invoke();
+        }
+
+        public bool Runs(int macroId)
+        {
+            foreach (var c in _commands)
+                if (c.IsRun && c.MacroId == macroId) return true;
+            return false;
+        }
+
+        public IEnumerator<Command> GetEnumerator() => _commands.GetEnumerator();
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+}

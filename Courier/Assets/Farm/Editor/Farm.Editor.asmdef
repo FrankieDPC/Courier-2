@@ -1,0 +1,19 @@
+{
+    "name": "Farm.Editor",
+    "rootNamespace": "Farm.EditorTools",
+    "references": [
+        "Farm.Sim",
+        "Farm.Game"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
