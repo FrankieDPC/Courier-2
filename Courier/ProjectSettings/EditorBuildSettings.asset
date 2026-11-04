@@ -6,6 +6,9 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
+    path: Assets/Farm/Scenes/Farm.unity
+    guid: b6ca52f1b09c82c4da59ba24e010d4fe
+  - enabled: 1
     path: Assets/Wizard/Scenes/Tower.unity
     guid: 26efd3a947c57f648960de15cc9e2954
   - enabled: 1

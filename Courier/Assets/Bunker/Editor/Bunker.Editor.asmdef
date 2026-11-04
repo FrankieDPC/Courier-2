@@ -1,0 +1,19 @@
+{
+    "name": "Bunker.Editor",
+    "rootNamespace": "Bunker.EditorTools",
+    "references": [
+        "Bunker.Sim",
+        "Bunker.Game"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
