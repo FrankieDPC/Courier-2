@@ -62,6 +62,18 @@ namespace Wizard.Sim
 
         public bool IsLot(Cell c) => InBounds(c) && KindAt(c) == CellKind.Lot;
 
+        /// <summary>A road cell where another drivable road branches off to the left or right.</summary>
+        public bool IsIntersection(Cell c, Facing facing) =>
+            IsDrivable(c.Step(facing.TurnLeft())) || IsDrivable(c.Step(facing.TurnRight()));
+
+        /// <summary>Should a "Forward till ..." stop after arriving at <paramref name="c"/>?</summary>
+        public bool ForwardStopsAt(Cell c, Facing facing, ForwardMode mode)
+        {
+            if (mode == ForwardMode.Step) return true;
+            if (!IsDrivable(c.Step(facing))) return true; // the road ends (or is blocked) ahead
+            return mode == ForwardMode.TillIntersection && IsIntersection(c, facing);
+        }
+
         public bool HasRoadAccess(Cell c)
         {
             for (int f = 0; f < 4; f++)

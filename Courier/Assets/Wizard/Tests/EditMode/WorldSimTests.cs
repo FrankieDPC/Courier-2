@@ -124,6 +124,23 @@ namespace Wizard.Tests
         }
 
         [Test]
+        public void SaveRoutineAsSpell_CopiesTheCommands()
+        {
+            var w = StarterWorld.Create();
+            var bramble = w.Constructs[0];
+            var saved = w.Spellbook.Create("Bramble's Day", bramble.Routine);
+
+            CollectionAssert.AreEqual(bramble.Routine, saved.Routine);
+            bramble.Routine.Clear();
+            Assert.AreEqual(8, saved.Routine.Count, "the spell is a copy, not a live link");
+
+            // Casting the saved spell walks the same route as the original routine did.
+            bramble.Routine.Add(Command.Cast(saved));
+            Assert.IsTrue(RoutineTracer.Trace(w, bramble).ReturnsToStart);
+            Assert.AreEqual(10, RoutineTracer.Trace(w, bramble).Ticks);
+        }
+
+        [Test]
         public void Spellbook_PreventsSpellsCastingThemselves()
         {
             var book = new Spellbook();
@@ -244,6 +261,124 @@ namespace Wizard.Tests
             Assert.IsTrue(RoutineTracer.Trace(w, w.Constructs[0]).ReturnsToStart);
         }
 
+        // ------------------------------------------------------------------ forward modes
+
+        [Test]
+        public void ForwardTillStop_DrivesToTheEndOfTheRoad_OneCellPerTick()
+        {
+            var w = EmptyWorld(); // roads at x/y = 3, 6, 9; unlocked 3..9
+            var c = w.AddConstruct();
+            c.Loop = false;
+            c.Routine.SetAll(new[] { Command.MoveTillStop, Command.Right });
+
+            w.StartDay();
+            for (int i = 0; i < 5; i++) w.Step();
+            Assert.AreEqual(new Cell(3, 8), c.Position, "still rolling after 5 ticks");
+            Assert.AreEqual(0, c.LastIndexIn(-1));
+            w.Step();
+            Assert.AreEqual(new Cell(3, 9), c.Position, "the road ends at the edge of the unlocked area");
+            w.Step();
+            Assert.AreEqual(Facing.East, c.Facing, "then the next command runs");
+            Assert.AreEqual(0, c.ProblemsToday);
+        }
+
+        [Test]
+        public void ForwardTillIntersection_StopsAtTheNextJunction()
+        {
+            var w = EmptyWorld();
+            var c = w.AddConstruct();
+            c.Loop = false;
+            c.Routine.SetAll(new[] { Command.MoveTillIntersection, Command.MoveTillIntersection });
+
+            w.StartDay();
+            for (int i = 0; i < 3; i++) w.Step();
+            Assert.AreEqual(new Cell(3, 6), c.Position, "(3,6) has a road branching east");
+            Assert.AreEqual(0, c.LastIndexIn(-1));
+            for (int i = 0; i < 3; i++) w.Step();
+            Assert.AreEqual(new Cell(3, 9), c.Position, "leaves the junction it's on and stops at the next");
+            Assert.AreEqual(1, c.LastIndexIn(-1));
+        }
+
+        [Test]
+        public void ForwardModes_BlockedAtTheStart_AndTracerAgrees()
+        {
+            var w = EmptyWorld();
+            var c = w.AddConstruct();
+            w.Execute(c, Command.Left); // facing west, into the locked wilds
+            Assert.AreEqual(CommandResult.Blocked, w.Execute(c, Command.MoveTillStop));
+            Assert.AreEqual(new Cell(3, 3), c.Position);
+
+            var trace = RoutineTracer.Trace(w.Grid, w.Spellbook, new Cell(3, 3), Facing.North, new[]
+            {
+                Command.MoveTillIntersection, // (3,6): 3 ticks
+                Command.MoveTillStop,         // (3,9): 3 ticks
+                Command.Right,                // 1 tick
+                Command.MoveTillStop,         // along y=9 to (9,9): 6 ticks
+                Command.Left,                 // 1 tick, facing north into the wilds
+                Command.MoveTillStop,         // blocked: 1 tick
+            });
+            Assert.AreEqual(3 + 3 + 1 + 6 + 1 + 1, trace.Ticks);
+            Assert.AreEqual(new Cell(9, 9), trace.End);
+            Assert.AreEqual(1, trace.BlockedCount);
+        }
+
+        [Test]
+        public void ForwardOption_CyclesThroughModes()
+        {
+            var c = Command.Move;
+            Assert.AreEqual(ForwardMode.TillStop, c.WithNextOption().Mode);
+            Assert.AreEqual(ForwardMode.TillIntersection, c.WithNextOption().WithNextOption().Mode);
+            Assert.AreEqual(ForwardMode.Step, c.WithNextOption().WithNextOption().WithNextOption().Mode);
+            Assert.AreEqual(InteractSide.Ahead, Command.PickUp().WithNextOption().Side);
+        }
+
+        // ------------------------------------------------------------------ dusk
+
+        [Test]
+        public void Dusk_ConstructsWalkHome_EmptyCargo_AndFaceTheirStart()
+        {
+            var w = EmptyWorld();
+            var c = w.AddConstruct();
+            c.Loop = false;
+            c.Routine.SetAll(new[] { Command.MoveTillStop, Command.Right, Command.MoveTillStop }); // ends at (9,9) facing east
+            c.AddCargo(Resource.Stone, 2);
+            int duskTicks = 0;
+            w.DuskStarted += () => duskTicks = w.Tick;
+
+            var report = w.RunFullDay();
+            Assert.AreEqual(Balance.TicksPerDay, duskTicks);
+            Assert.AreEqual(Balance.TicksPerDay + 12, w.Tick, "12 road cells back from (9,9) to (3,3)");
+            Assert.AreEqual(c.Home, c.Position);
+            Assert.AreEqual(c.HomeFacing, c.Facing);
+            Assert.AreEqual(0, c.CargoCount);
+            Assert.AreEqual(2, w.Stockpile.Get(Resource.Stone), "cargo is emptied into the tower");
+            Assert.AreEqual(2, report.Delivered.Get(Resource.Stone));
+            Assert.AreEqual(DayPhase.Planning, w.Phase);
+        }
+
+        [Test]
+        public void Dusk_IsInstantWhenEveryoneIsAlreadyHome()
+        {
+            var w = EmptyWorld();
+            var c = w.AddConstruct();
+            c.Routine.SetAll(new[] { Command.Left, Command.Right }); // spins on the spot
+            w.RunFullDay();
+            Assert.AreEqual(Balance.TicksPerDay, w.Tick);
+        }
+
+        [Test]
+        public void Dusk_CountsForCollectJobs()
+        {
+            var w = EmptyWorld();
+            var cottage = w.AddBuilding(Catalogue.Cottage, new Cell(4, 5), "Ada");
+            var job = w.PostJob(JobKind.Collect, cottage, Resource.Parcel, 2, dueDay: 1, goldReward: 5);
+            var c = w.AddConstruct();
+            c.Loop = false;
+            c.Routine.SetAll(new[] { Command.Move, Command.Move, Command.PickUp(InteractSide.Right) });
+            w.RunFullDay();
+            Assert.AreEqual(JobState.Done, job.State, "parcels carried home at dusk reach the tower in time");
+        }
+
         // ------------------------------------------------------------------ day preview
 
         [Test]
@@ -254,20 +389,22 @@ namespace Wizard.Tests
             var preview = DayPreview.Run(w);
 
             Assert.AreEqual(0, preview.StartTick);
-            Assert.AreEqual(Balance.TicksPerDay, preview.EndTick);
-            Assert.AreEqual(Balance.TicksPerDay + 1, preview.FramesFor(bramble.Id).Count, "one frame per tick plus the start");
+            Assert.AreEqual(Balance.TicksPerDay, preview.DuskTick);
+            Assert.GreaterOrEqual(preview.EndTick, Balance.TicksPerDay);
+            Assert.AreEqual(preview.EndTick + 1, preview.FramesFor(bramble.Id).Count, "one frame per tick plus the start");
 
-            // Play the real day and compare tick by tick.
+            // Play the real day (work + dusk) and compare tick by tick.
             w.StartDay();
-            for (int t = 1; t <= Balance.TicksPerDay - 1; t++)
+            while (w.Phase != DayPhase.Planning)
             {
                 w.Step();
-                Assert.IsTrue(preview.TryGetFrame(bramble.Id, t, out var f));
-                Assert.AreEqual(bramble.Position, f.Position, $"tick {t}");
-                Assert.AreEqual(bramble.CargoCount, f.CargoCount, $"tick {t}");
-                Assert.AreEqual(bramble.LastResult, f.Result, $"tick {t}");
+                if (w.Phase == DayPhase.Planning) break;
+                Assert.IsTrue(preview.TryGetFrame(bramble.Id, w.Tick, out var f));
+                Assert.AreEqual(bramble.Position, f.Position, $"tick {w.Tick}");
+                Assert.AreEqual(bramble.CargoCount, f.CargoCount, $"tick {w.Tick}");
+                Assert.AreEqual(bramble.LastResult, f.Result, $"tick {w.Tick}");
             }
-            w.Step();
+            Assert.AreEqual(w.Tick, preview.EndTick, "the day ends on the same tick");
             var done = w.Jobs.Where(j => j.State == JobState.Done).Select(j => j.Title).ToList();
             CollectionAssert.AreEqual(done, preview.JobsDone.Select(j => j.Title).ToList());
         }

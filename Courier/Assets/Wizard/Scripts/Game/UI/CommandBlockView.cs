@@ -73,6 +73,12 @@ namespace Wizard.Game
                 var spell = book.Get(c.SpellId);
                 return "* " + (spell != null ? spell.Name : "(missing)");
             }
+            if (c.Type == CommandType.MoveForward)
+            {
+                return c.Mode == ForwardMode.Step
+                    ? CommandInfo.Name(c.Type)
+                    : $"{CommandInfo.Name(c.Type)}  <size=12><color=#FFFFFFB0>[{CommandInfo.ModeName(c.Mode)}]</color></size>";
+            }
             if (!c.HasSide) return CommandInfo.Name(c.Type);
             string side = c.Side == InteractSide.Auto ? "auto" : c.Side.ToString().ToLowerInvariant();
             return $"{CommandInfo.Name(c.Type)}  <size=12><color=#FFFFFFB0>[{side}]</color></size>";
@@ -121,7 +127,7 @@ namespace Wizard.Game
 
             if (FromPalette) _editor.Append(Command);
             else if (Command.IsCast) _editor.OpenSpell(Command.SpellId);
-            else if (Command.HasSide) _editor.CycleSide(Index);
+            else if (Command.HasOptions) _editor.CycleOption(Index);
         }
     }
 }

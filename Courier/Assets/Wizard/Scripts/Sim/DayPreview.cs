@@ -88,6 +88,7 @@ namespace Wizard.Sim
         readonly Dictionary<int, List<PreviewDelivery>> _deliveries = new Dictionary<int, List<PreviewDelivery>>();
         readonly Dictionary<int, List<PreviewProblem>> _problems = new Dictionary<int, List<PreviewProblem>>();
         readonly List<PreviewJob> _jobsDone = new List<PreviewJob>();
+        readonly Dictionary<int, List<ResourceAmount>> _banked = new Dictionary<int, List<ResourceAmount>>();
 
         public int Day { get; private set; }
         public bool IsDoomDay { get; private set; }
@@ -95,8 +96,11 @@ namespace Wizard.Sim
         /// <summary>The tick the preview starts from (0 when planning; the current tick when paused mid-day).</summary>
         public int StartTick { get; private set; }
 
-        /// <summary>The tick the day ends on.</summary>
+        /// <summary>The tick the day ends on (after everyone has walked home).</summary>
         public int EndTick { get; private set; }
+
+        /// <summary>The tick work stopped and constructs started walking home (-1 if it never did, e.g. the doom day).</summary>
+        public int DuskTick { get; private set; } = -1;
 
         public IReadOnlyList<PreviewJob> JobsDone => _jobsDone;
 
@@ -116,13 +120,20 @@ namespace Wizard.Sim
                 preview._frames[c.Id] = new List<PreviewFrame> { new PreviewFrame(c, world.Tick, true) };
                 preview._deliveries[c.Id] = new List<PreviewDelivery>();
                 preview._problems[c.Id] = new List<PreviewProblem>();
+                preview._banked[c.Id] = new List<ResourceAmount>();
             }
+            if (world.IsDusk) preview.DuskTick = world.Tick;
 
             int tickNow = world.Tick;
             world.Delivered += (c, b, r, n) => preview.AddDelivery(c.Id, b.Name, r, n);
             world.JobFinished += j =>
             {
                 if (j.State == JobState.Done) preview._jobsDone.Add(new PreviewJob(j.Title, tickNow + 1, j.Reward));
+            };
+            world.DuskStarted += () => preview.DuskTick = world.Tick;
+            world.CargoBanked += (c, r, n) =>
+            {
+                if (preview._banked.TryGetValue(c.Id, out var list)) list.Add(new ResourceAmount(r, n));
             };
             world.Ticked += () =>
             {
@@ -132,7 +143,7 @@ namespace Wizard.Sim
             };
 
             int guard = 0;
-            while (world.Phase == DayPhase.Running && guard++ < SafetyTicks)
+            while (world.Phase != DayPhase.Planning && guard++ < SafetyTicks)
             {
                 tickNow = world.Tick;
                 world.Step();
@@ -142,6 +153,10 @@ namespace Wizard.Sim
 
         public IReadOnlyList<PreviewFrame> FramesFor(int constructId) =>
             _frames.TryGetValue(constructId, out var f) ? f : (IReadOnlyList<PreviewFrame>)Array.Empty<PreviewFrame>();
+
+        /// <summary>What the construct was still carrying when work stopped (emptied into the tower at dusk).</summary>
+        public IReadOnlyList<ResourceAmount> BankedAtDuskFor(int constructId) =>
+            _banked.TryGetValue(constructId, out var b) ? b : (IReadOnlyList<ResourceAmount>)Array.Empty<ResourceAmount>();
 
         public IReadOnlyList<PreviewDelivery> DeliveriesFor(int constructId) =>
             _deliveries.TryGetValue(constructId, out var d) ? d : (IReadOnlyList<PreviewDelivery>)Array.Empty<PreviewDelivery>();

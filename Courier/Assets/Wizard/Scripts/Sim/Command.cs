@@ -29,6 +29,19 @@ namespace Wizard.Sim
         Right,
     }
 
+    /// <summary>How far a Forward command goes. Each cell moved still takes one tick.</summary>
+    public enum ForwardMode
+    {
+        /// <summary>One cell.</summary>
+        Step,
+
+        /// <summary>Keep going until the road ahead ends (or is blocked).</summary>
+        TillStop,
+
+        /// <summary>Keep going until reaching a junction (a road branching left or right), or the road ends.</summary>
+        TillIntersection,
+    }
+
     public enum CommandResult
     {
         None,
@@ -57,19 +70,36 @@ namespace Wizard.Sim
         /// <summary>For <see cref="CommandType.Cast"/>: the spell's id in the <see cref="Spellbook"/>.</summary>
         public int SpellId;
 
-        public Command(CommandType type, InteractSide side = InteractSide.Auto, int spellId = 0)
+        /// <summary>For <see cref="CommandType.MoveForward"/>: one cell, till the road stops, or till a junction.</summary>
+        public ForwardMode Mode;
+
+        public Command(CommandType type, InteractSide side = InteractSide.Auto, int spellId = 0, ForwardMode mode = ForwardMode.Step)
         {
             Type = type;
             Side = side;
             SpellId = spellId;
+            Mode = mode;
         }
 
         public bool HasSide => Type == CommandType.PickUp || Type == CommandType.DropOff;
         public bool IsCast => Type == CommandType.Cast;
 
-        public Command WithNextSide() => new Command(Type, (InteractSide)(((int)Side + 1) % 4), SpellId);
+        /// <summary>Commands whose option can be cycled by clicking them (side or forward mode).</summary>
+        public bool HasOptions => HasSide || Type == CommandType.MoveForward;
+
+        /// <summary>The same command with its next option: sides for Pick Up/Drop Off, distance for Forward.</summary>
+        public Command WithNextOption()
+        {
+            if (Type == CommandType.MoveForward)
+                return new Command(Type, Side, SpellId, (ForwardMode)(((int)Mode + 1) % 3));
+            if (HasSide)
+                return new Command(Type, (InteractSide)(((int)Side + 1) % 4), SpellId, Mode);
+            return this;
+        }
 
         public static Command Move => new Command(CommandType.MoveForward);
+        public static Command MoveTillStop => new Command(CommandType.MoveForward, mode: ForwardMode.TillStop);
+        public static Command MoveTillIntersection => new Command(CommandType.MoveForward, mode: ForwardMode.TillIntersection);
         public static Command Left => new Command(CommandType.TurnLeft);
         public static Command Right => new Command(CommandType.TurnRight);
         public static Command UTurn => new Command(CommandType.TurnAround);
@@ -79,9 +109,10 @@ namespace Wizard.Sim
         public static Command Cast(Spell spell) => new Command(CommandType.Cast, InteractSide.Auto, spell.Id);
         public static Command Cast(int spellId) => new Command(CommandType.Cast, InteractSide.Auto, spellId);
 
-        public bool Equals(Command other) => Type == other.Type && Side == other.Side && SpellId == other.SpellId;
+        public bool Equals(Command other) =>
+            Type == other.Type && Side == other.Side && SpellId == other.SpellId && Mode == other.Mode;
         public override bool Equals(object obj) => obj is Command c && Equals(c);
-        public override int GetHashCode() => ((int)Type * 8 + (int)Side) * 397 ^ SpellId;
+        public override int GetHashCode() => (((int)Type * 8 + (int)Side) * 4 + (int)Mode) * 397 ^ SpellId;
         public override string ToString() => CommandInfo.Label(this, null);
     }
 
@@ -122,7 +153,18 @@ namespace Wizard.Sim
                 var spell = book?.Get(c.SpellId);
                 return spell != null ? "Cast: " + spell.Name : "Cast: (missing spell)";
             }
+            if (c.Type == CommandType.MoveForward && c.Mode != ForwardMode.Step) return $"{Name(c.Type)} ({ModeName(c.Mode)})";
             return c.HasSide && c.Side != InteractSide.Auto ? $"{Name(c.Type)} ({c.Side})" : Name(c.Type);
+        }
+
+        public static string ModeName(ForwardMode m)
+        {
+            switch (m)
+            {
+                case ForwardMode.TillStop: return "till stop";
+                case ForwardMode.TillIntersection: return "till intersection";
+                default: return "1 step";
+            }
         }
 
         public static bool IsProblem(CommandResult r) => r >= CommandResult.NothingToCollect;

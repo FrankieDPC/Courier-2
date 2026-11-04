@@ -168,14 +168,23 @@ namespace Wizard.Game
                 sb.Append($"{j.Title} (tick {j.Tick}, {ResourceAmount.Describe(j.Reward)})");
             }
 
-            // End state
-            var frames = result.FramesFor(c.Id);
-            if (frames.Count > 0)
+            // End of the day: dusk walk home (not on the doom day)
+            if (result.DuskTick >= 0)
             {
-                var last = frames[frames.Count - 1];
-                sb.Append(last.CargoCount > 0
-                    ? $"\n<b>Ends the day</b> carrying {last.CargoCount} {last.Cargo}."
-                    : "\n<b>Ends the day</b> empty-handed.");
+                var banked = result.BankedAtDuskFor(c.Id);
+                string cargo = banked.Count == 0 ? "empty-handed" : $"and empties {ResourceAmount.Describe(banked)} into the tower";
+                sb.Append($"\n<b>Dusk</b> (tick {result.DuskTick}): walks home {cargo}.");
+            }
+            else
+            {
+                var frames = result.FramesFor(c.Id);
+                if (frames.Count > 0)
+                {
+                    var last = frames[frames.Count - 1];
+                    sb.Append(last.CargoCount > 0
+                        ? $"\n<b>Ends the day</b> carrying {last.CargoCount} {last.Cargo}."
+                        : "\n<b>Ends the day</b> empty-handed.");
+                }
             }
 
             var problems = result.ProblemsFor(c.Id);

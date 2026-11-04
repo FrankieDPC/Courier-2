@@ -71,21 +71,28 @@ namespace Wizard.Sim
                     continue;
                 }
 
-                bool blocked = false;
+                if (c.Type == CommandType.MoveForward)
+                {
+                    // One step per tick until the mode says stop (or the road does).
+                    while (result.Steps.Count < MaxSteps)
+                    {
+                        var next = pos.Step(dir);
+                        bool stuck = !grid.IsDrivable(next);
+                        if (!stuck) pos = next;
+                        else result.BlockedCount++;
+                        result.Steps.Add(new TraceStep { Command = c, Position = pos, Facing = dir, Blocked = stuck, Depth = depth });
+                        if (stuck || grid.ForwardStopsAt(pos, dir, c.Mode)) break;
+                    }
+                    continue;
+                }
+
                 switch (c.Type)
                 {
-                    case CommandType.MoveForward:
-                        var next = pos.Step(dir);
-                        if (grid.IsDrivable(next)) pos = next;
-                        else blocked = true;
-                        break;
                     case CommandType.TurnLeft: dir = dir.TurnLeft(); break;
                     case CommandType.TurnRight: dir = dir.TurnRight(); break;
                     case CommandType.TurnAround: dir = dir.Reverse(); break;
                 }
-
-                if (blocked) result.BlockedCount++;
-                result.Steps.Add(new TraceStep { Command = c, Position = pos, Facing = dir, Blocked = blocked, Depth = depth });
+                result.Steps.Add(new TraceStep { Command = c, Position = pos, Facing = dir, Depth = depth });
             }
         }
     }

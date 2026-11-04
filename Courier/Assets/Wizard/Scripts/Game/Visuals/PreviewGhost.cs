@@ -90,7 +90,7 @@ namespace Wizard.Game
             }
 
             _preview.TryGetFrame(c, out var shown);
-            bool problem = CommandInfo.IsProblem(shown.Result);
+            bool problem = shown.Path.Length > 0 && CommandInfo.IsProblem(shown.Result);
             _alert.gameObject.SetActive(problem);
             if (problem) _alert.color = CommandInfo.IsHardProblem(shown.Result) ? Palette.Error : Palette.Warning;
         }

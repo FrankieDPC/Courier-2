@@ -65,6 +65,14 @@ namespace Wizard.Sim
             return spell;
         }
 
+        /// <summary>Creates a spell holding a copy of <paramref name="commands"/> (e.g. "save routine as spell").</summary>
+        public Spell Create(string name, IEnumerable<Command> commands)
+        {
+            var spell = Create(name);
+            if (spell != null && commands != null) spell.Routine.SetAll(new List<Command>(commands));
+            return spell;
+        }
+
         public void Rename(Spell spell, string name)
         {
             var clean = Clean(name);

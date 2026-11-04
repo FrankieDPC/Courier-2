@@ -12,7 +12,8 @@ namespace Wizard.Game
     ///   Palette / spellbook -> list   drag to insert (or click to append)
     ///   List -> list                  drag to reorder
     ///   List -> outside               drag out to delete (or right-click)
-    ///   Click a Pick Up / Drop Off row to cycle its side; click a Cast row to open that spell.
+    ///   Click a Forward row to cycle 1 step / till stop / till intersection; click a Pick Up / Drop Off
+    ///   row to cycle its side; click a Cast row to open that spell.
     /// Editing is allowed while planning or while the day is paused.
     /// </summary>
     public sealed class RoutineEditor : MonoBehaviour
@@ -137,9 +138,15 @@ namespace Wizard.Game
 
             BuildList(panel.transform);
 
-            var preview = UIFactory.Button("Preview", panel.transform, "", Palette.AccentSoft, Palette.Accent, 14, TogglePreview, out _previewText);
+            var actions = UIFactory.Rect("Actions", panel.transform);
+            UIFactory.Size(actions, 32, -1, -1, 0);
+            UIFactory.HStack(actions, 8);
+            var preview = UIFactory.Button("Preview", actions, "", Palette.AccentSoft, Palette.Accent, 14, TogglePreview, out _previewText);
             _previewText.fontStyle = FontStyle.Bold;
-            UIFactory.Size(preview, 32);
+            UIFactory.Size(preview, -1, -1, 1);
+            var save = UIFactory.Button("Save As Spell", actions, "Save as spell", Palette.AccentSoft, Palette.Accent, 14, SaveAsSpell, out var saveText);
+            saveText.fontStyle = FontStyle.Bold;
+            UIFactory.Size(save, -1, 132);
 
             _footer = UIFactory.Label("Footer", panel.transform, "", 13, Palette.InkSoft);
 
@@ -418,7 +425,7 @@ namespace Wizard.Game
             _loopText.text = _construct.Loop ? "Loop: on" : "Loop: off";
             _clearButton.interactable = editable;
             _hint.text = editable
-                ? "Drag blocks into the routine. Click Pick Up/Drop Off rows to change side, Cast rows to open the spell. Drag a row out to delete."
+                ? "Drag blocks in. Click Forward rows to go till stop/intersection, Pick Up/Drop Off rows to change side, Cast rows to open the spell. Drag out to delete."
                 : "Locked while the day runs. Pause (Space) to make changes.";
         }
 
@@ -517,7 +524,9 @@ namespace Wizard.Game
 
                 string who = _spell != null ? _construct.Name + ": " : "";
                 string cargo = _construct.IsCarrying ? $"carrying {_construct.CargoCount} {_construct.Cargo}" : "empty";
-                if (running && idx >= 0)
+                if (World.IsDusk)
+                    _status.text = $"{who}heading home for the night";
+                else if (running && idx >= 0)
                     _status.text = $"{who}line {idx + 1}: {CommandInfo.Describe(_construct.LastResult)}";
                 else if (running)
                     _status.text = $"{who}{cargo}";
@@ -556,9 +565,10 @@ namespace Wizard.Game
             if (CanEdit) Current.RemoveAt(index);
         }
 
-        public void CycleSide(int index)
+        /// <summary>Forward: 1 step / till stop / till intersection. Pick Up & Drop Off: auto / ahead / left / right.</summary>
+        public void CycleOption(int index)
         {
-            if (CanEdit) Current.Set(index, Current[index].WithNextSide());
+            if (CanEdit) Current.Set(index, Current[index].WithNextOption());
         }
 
         void ToggleLoop()
@@ -584,6 +594,29 @@ namespace Wizard.Game
                 return;
             }
             OpenSpell(spell.Id);
+        }
+
+        /// <summary>Copies the routine on screen into a brand-new spell and opens it, ready to name.</summary>
+        void SaveAsSpell()
+        {
+            if (World.IsGameOver) return;
+            var routine = Current;
+            if (routine == null || routine.Count == 0)
+            {
+                _game.ShowToast("Nothing to save yet - add some commands first");
+                return;
+            }
+            if (Book.IsFull)
+            {
+                _game.ShowToast($"The spellbook holds {Spellbook.MaxSpells} spells - delete one first");
+                return;
+            }
+
+            string name = _spell != null ? _spell.Name + " copy" : (_construct != null ? _construct.Name + "'s Day" : null);
+            var spell = Book.Create(name, routine);
+            OpenSpell(spell.Id);
+            _nameField.ActivateInputField(); // selects the name so typing replaces it
+            _game.ShowToast($"Saved {spell.Routine.Count} commands as a new spell. Name it, then drag it into any routine.");
         }
 
         void OnNameEdited(string name)

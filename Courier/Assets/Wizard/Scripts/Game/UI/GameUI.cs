@@ -407,12 +407,13 @@ namespace Wizard.Game
             string sub;
             if (World.IsGameOver) sub = World.Outcome == Outcome.Victory ? "the tower stands" : "the tower has fallen";
             else if (World.IsSiege) sub = _game.Paused ? "THE DOOM (paused)" : "THE DOOM IS HERE";
+            else if (World.IsDusk) sub = "dusk: constructs head home";
             else if (World.IsDoomDay) sub = "the Doom arrives today";
             else sub = World.DaysUntilDoom == 1 ? "the Doom arrives tomorrow" : $"Doom in {World.DaysUntilDoom} days";
             var subColor = World.IsDoomDay ? Palette.Doom : Palette.InkSoft;
             _dayText.text = $"Day {World.Day}/{World.Doom.Day}\n<size=13><color={UIFactory.Hex(subColor)}>{sub}</color></size>";
 
-            _dayFill.anchorMax = new Vector2(World.Phase == DayPhase.Running ? World.DayProgress01 : 0f, 1f);
+            _dayFill.anchorMax = new Vector2(World.Phase != DayPhase.Planning ? World.DayProgress01 : 0f, 1f);
             _dayFillImage.color = World.IsDoomDay ? Palette.Doom : Palette.Accent;
 
             float hp = World.TowerMaxHp > 0 ? World.TowerHp / (float)World.TowerMaxHp : 0f;

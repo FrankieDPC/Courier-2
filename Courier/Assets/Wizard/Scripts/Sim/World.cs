@@ -10,6 +10,12 @@ namespace Wizard.Sim
 
         /// <summary>The day is running (on the doom day, this is the siege).</summary>
         Running,
+
+        /// <summary>
+        /// The day's work is over: constructs walk home along the roads, empty their cargo into the
+        /// tower and line up at their start position. Nothing else happens. Skipped on the doom day.
+        /// </summary>
+        Dusk,
     }
 
     public enum PlacementCheck
@@ -69,8 +75,13 @@ namespace Wizard.Sim
 
         public bool IsDoomDay => Day >= Doom.Day;
         public bool IsSiege => IsDoomDay && Phase == DayPhase.Running;
+        public bool IsDusk => Phase == DayPhase.Dusk;
+
+        /// <summary>True from the moment a day starts until it has fully ended (work, then dusk).</summary>
+        public bool IsDayInProgress => Phase != DayPhase.Planning;
+
         public int DaysUntilDoom => Math.Max(0, Doom.Day - Day);
-        public float DayProgress01 => IsDoomDay ? SiegeProgress01 : (TicksPerDay > 0 ? Tick / (float)TicksPerDay : 0f);
+        public float DayProgress01 => IsDoomDay ? SiegeProgress01 : (TicksPerDay > 0 ? Math.Min(1f, Tick / (float)TicksPerDay) : 0f);
 
         public int TowerMaxHp { get; private set; } = Balance.TowerBaseHp;
         public int TowerHp { get; private set; } = Balance.TowerBaseHp;
@@ -197,7 +208,7 @@ namespace Wizard.Sim
 
         public void StartDay()
         {
-            if (Phase == DayPhase.Running || IsGameOver) return;
+            if (Phase != DayPhase.Planning || IsGameOver) return;
             Phase = DayPhase.Running;
             Tick = 0;
             DeliveredToday.Clear();
@@ -212,9 +223,20 @@ namespace Wizard.Sim
             DayStarted?.Invoke();
         }
 
-        /// <summary>One tick: constructs act, buildings produce, then (on the doom day) the siege advances.</summary>
+        /// <summary>
+        /// One tick: constructs act, buildings produce, then (on the doom day) the siege advances.
+        /// After the day's last tick comes dusk, when constructs walk home (one cell per tick).
+        /// </summary>
         public void Step()
         {
+            if (Phase == DayPhase.Dusk)
+            {
+                DuskStep();
+                Tick++;
+                Ticked?.Invoke();
+                if (AllHome()) EndDay();
+                return;
+            }
             if (Phase != DayPhase.Running) return;
 
             foreach (var c in _constructs) RunNextCommand(c);
@@ -230,7 +252,8 @@ namespace Wizard.Sim
             }
             else if (Tick >= TicksPerDay)
             {
-                EndDay();
+                BeginDusk();
+                if (AllHome()) EndDay();
             }
         }
 
@@ -242,7 +265,7 @@ namespace Wizard.Sim
             DayEnded += Capture;
             StartDay();
             int guard = 0;
-            while (Phase == DayPhase.Running && guard++ < 100000) Step();
+            while (Phase != DayPhase.Planning && guard++ < 100000) Step();
             DayEnded -= Capture;
             return report;
         }
@@ -258,7 +281,7 @@ namespace Wizard.Sim
 
             Phase = DayPhase.Planning;
             Day++;
-            foreach (var c in _constructs) c.ReturnHome(); // constructs fly home overnight, cargo and all
+            foreach (var c in _constructs) c.ReturnHome(); // already home after dusk; this resets their programs
             if (!IsDoomDay) PostJobs();
             DayEnded?.Invoke(report);
         }

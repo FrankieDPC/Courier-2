@@ -14,6 +14,9 @@ namespace Wizard.Game
     {
         static readonly float[] s_Speeds = { 1f, 2f, 4f, 8f };
 
+        /// <summary>Dusk (constructs walking home) plays faster than the working day.</summary>
+        const float DuskSpeedup = 3f;
+
         public World World { get; private set; }
 
         /// <summary>Real seconds per sim tick at 1x speed.</summary>
@@ -79,28 +82,28 @@ namespace Wizard.Game
                 StartDay();
             }
 
-            if (World.Phase != DayPhase.Running)
+            if (World.Phase == DayPhase.Planning)
             {
                 TickProgress = 1f;
                 return;
             }
             if (Paused) return;
 
-            _accumulator += Time.deltaTime * Speed;
+            _accumulator += Time.deltaTime * Speed * (World.IsDusk ? DuskSpeedup : 1f);
             int guard = 0;
-            while (_accumulator >= SecondsPerTick && World.Phase == DayPhase.Running && guard++ < 64)
+            while (_accumulator >= SecondsPerTick && World.Phase != DayPhase.Planning && guard++ < 64)
             {
                 _accumulator -= SecondsPerTick;
                 World.Step();
             }
-            TickProgress = World.Phase == DayPhase.Running ? Mathf.Clamp01(_accumulator / SecondsPerTick) : 1f;
+            TickProgress = World.Phase != DayPhase.Planning ? Mathf.Clamp01(_accumulator / SecondsPerTick) : 1f;
         }
 
         // ------------------------------------------------------------------ time
 
         public void StartDay()
         {
-            if (World.Phase == DayPhase.Running || World.IsGameOver) return;
+            if (World.Phase != DayPhase.Planning || World.IsGameOver) return;
             _accumulator = 0f;
             TickProgress = 0f;
             Paused = false;
@@ -118,7 +121,7 @@ namespace Wizard.Game
 
         public void TogglePause()
         {
-            if (World.Phase != DayPhase.Running) return;
+            if (World.Phase == DayPhase.Planning) return;
             Paused = !Paused;
             StateChanged?.Invoke();
         }

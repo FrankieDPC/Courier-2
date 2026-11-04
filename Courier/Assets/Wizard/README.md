@@ -60,8 +60,17 @@ On day 10 the Doom comes up the roads and your preparations either hold or they 
   - Editing a spell changes every construct and spell that casts it.
   - Spells can cast other spells, but never themselves, even indirectly; the editor refuses.
   - Deleting a spell removes every cast of it.
+  - **Save as spell** (under the routine) copies the routine on screen into a new spell and opens it so you can name it. Use it on a construct's routine to bottle a route you're happy with, or on a spell to duplicate it.
+- **Forward distance:** click a Forward row to switch between `1 step`, `till stop` and `till intersection`.
+  - `till stop` keeps driving until the road ahead ends or is blocked.
+  - `till intersection` keeps driving until the construct reaches a junction (a road branching left or right), or the road ends. It never counts the junction it starts on.
+  - Every cell moved still takes one tick, and the routine waits on that line until the construct arrives.
 - **Pick Up and Drop Off sides:** click a row to switch between `auto`, `ahead`, `left` and `right`. `auto` tries ahead, then left, then right, then behind, and uses the first building that can do the job.
 - **Looping:** routines loop until the day ends unless **Loop** is off.
+- **Dusk:** when the working day ends (tick 96), every construct stops its routine and walks home along the shortest road route, one cell per tick.
+  - At home it empties its cargo into the tower, which counts toward "take it to the tower" jobs. Set `Balance.BankCargoAtDusk` to false to make leftover cargo vanish instead.
+  - It then faces its start direction. The day ends once everyone is home, so each day starts clean.
+  - Dusk plays three times faster. There's no dusk on the doom day.
 - **Route preview:** the selected construct's route is drawn on the map with every spell expanded:
   - green and orange markers show pick-ups and drop-offs
   - red markers show moves that hit a dead end
@@ -91,6 +100,7 @@ Scripts/Sim/      Wizard.Sim: pure C#, no UnityEngine (asmdef enforces it). Dete
   World.Commands.cs   command execution and goods hand-off
   World.Jobs.cs       job board: posting, crediting, rewards, expiry (seeded RNG)
   World.Siege.cs      the Doom: spawning, road pathing (BFS), wards/tower firing, potions, outcome
+  World.Dusk.cs       end of day: walk home, empty cargo, line up
   Construct.cs        construct state + call stack for spells
   Spellbook.cs        shared spells, cycle checks
   Command.cs          CommandType/Command/Routine

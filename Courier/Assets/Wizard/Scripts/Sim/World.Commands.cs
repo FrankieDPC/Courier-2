@@ -22,13 +22,21 @@ namespace Wizard.Sim
                 return;
             }
 
-            c.LastResult = Execute(c, cmd);
+            c.LastResult = Execute(c, cmd, out bool finished);
+            if (!finished) c.RepeatCurrent(); // e.g. "Forward till stop" keeps going next tick
             if (CommandInfo.IsProblem(c.LastResult)) c.ProblemsToday++;
         }
 
-        /// <summary>Executes a single (non-Cast) command immediately. Public so tests can drive constructs directly.</summary>
-        public CommandResult Execute(Construct c, Command cmd)
+        /// <summary>Executes one tick of a (non-Cast) command immediately. Public so tests can drive constructs directly.</summary>
+        public CommandResult Execute(Construct c, Command cmd) => Execute(c, cmd, out _);
+
+        /// <summary>
+        /// One tick of a command. <paramref name="finished"/> is false when the command wants more ticks
+        /// (a "Forward till ..." that hasn't arrived yet).
+        /// </summary>
+        public CommandResult Execute(Construct c, Command cmd, out bool finished)
         {
+            finished = true;
             switch (cmd.Type)
             {
                 case CommandType.MoveForward:
@@ -36,6 +44,7 @@ namespace Wizard.Sim
                     var next = c.Position.Step(c.Facing);
                     if (!Grid.IsDrivable(next)) return CommandResult.Blocked;
                     c.Position = next;
+                    finished = Grid.ForwardStopsAt(next, c.Facing, cmd.Mode);
                     return CommandResult.Ok;
                 }
                 case CommandType.TurnLeft:

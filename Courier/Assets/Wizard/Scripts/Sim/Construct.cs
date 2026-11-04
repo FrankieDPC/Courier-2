@@ -214,6 +214,13 @@ namespace Wizard.Sim
             return false;
         }
 
+        /// <summary>Run the command just fetched again next tick (multi-tick commands like "Forward till stop").</summary>
+        internal void RepeatCurrent()
+        {
+            var top = _stack[_stack.Count - 1];
+            if (top.Pc > 0) top.Pc--;
+        }
+
         void RecordPath()
         {
             _lastPath.Clear();

@@ -91,6 +91,12 @@ namespace Wizard.Sim
 
         public const int ConstructCapacity = 3;
 
+        /// <summary>
+        /// At dusk constructs empty their cargo. True: it goes into the tower's stores (and counts for
+        /// "take it to the tower" jobs). False: it's simply lost.
+        /// </summary>
+        public static readonly bool BankCargoAtDusk = true;
+
         public const int TowerBaseHp = 20;
         public const int FortifyHp = 5;
         public const int PotionHeal = 4;
