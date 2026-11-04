@@ -33,7 +33,7 @@ namespace Farm.Game
             _model = new GameObject("Model").transform;
             _model.SetParent(transform, false);
             Shapes.Box("Ring", _model, new Vector3(0f, -Lift + 0.09f, 0f), new Vector3(0.7f, 0.02f, 0.7f), Palette.Pick, false);
-            var body = BotView.BuildModel(_model, color, Color.white, false);
+            var body = BotView.BuildModel(_model, color, b.Kind, Color.white, false);
 
             _load = new GameObject[5];
             for (int i = 0; i < _load.Length; i++)

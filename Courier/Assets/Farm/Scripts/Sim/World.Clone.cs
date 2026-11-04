@@ -20,6 +20,7 @@ namespace Farm.Sim
                 Phase = Phase,
                 Earned = Earned,
                 CapacityLevel = CapacityLevel,
+                BotsBought = BotsBought,
                 Outcome = Outcome,
             };
 
@@ -29,7 +30,7 @@ namespace Farm.Sim
 
             foreach (var b in _bots)
             {
-                var copy = new Bot(b.Id, b.Name, b.Home, b.HomeFacing, b.Capacity);
+                var copy = new Bot(b.Id, b.Name, b.Home, b.HomeFacing, b.Capacity, b.Kind);
                 copy.CopyStateFrom(b, w.Library);
                 w._bots.Add(copy);
             }

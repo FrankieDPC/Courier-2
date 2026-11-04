@@ -374,12 +374,13 @@ namespace Farm.Game
             foreach (var (b, bg, text) in _botButtons)
             {
                 string load = b.IsCarrying ? $"{b.Load.Weight}/{b.Capacity} {ShortName(b.Load.Main)}" : "empty";
-                text.text = $"{b.Name}\n<size=11><color={UIFactory.Hex(Palette.InkSoft)}>{load}</color></size>";
+                string tag = b.Kind == BotKind.Farmhand ? "" : $" <size=10><color={UIFactory.Hex(Palette.For(Item.Water))}>WATER</color></size>";
+                text.text = $"{b.Name}{tag}\n<size=11><color={UIFactory.Hex(Palette.InkSoft)}>{load}</color></size>";
                 bg.color = b == _game.SelectedBot ? Palette.AccentSoft : Palette.Button;
             }
 
             bool over = World.IsGameOver;
-            _buyBotText.text = $"+ Buy a bot  <size=11>{World.NextBotCost}g</size>";
+            _buyBotText.text = $"+ Buy a farmhand  <size=11>{World.NextBotCost}g</size>";
             _buyBotButton.interactable = !over && World.Gold >= World.NextBotCost;
 
             foreach (var (crop, button) in _seedButtons)
@@ -454,7 +455,7 @@ namespace Farm.Game
             string last = b.LastPath.Count > 0
                 ? $"line {b.LastPath[0].Index + 1}: {CommandInfo.Describe(b.LastResult)}"
                 : "waiting by the door";
-            return $"<b>{b.Name}</b> - {load}\n{last}";
+            return $"<b>{b.Name}</b>, {BotKinds.Name(b.Kind).ToLowerInvariant()} ({BotKinds.Duties(b.Kind)}) - {load}\n{last}";
         }
 
         void OnSeasonOver(Outcome outcome)

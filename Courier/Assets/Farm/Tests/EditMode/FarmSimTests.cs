@@ -13,14 +13,18 @@ namespace Farm.Tests
     {
         static World Farm() => StarterFarm.Create();
 
-        /// <summary>The starter farm with Sprocket's routine cleared, ready for a test to drive.</summary>
+        /// <summary>The starter farm with every routine cleared; returns Sprocket (a farmhand) for a test to drive.</summary>
         static (World w, Bot b) Blank()
         {
             var w = StarterFarm.Create();
-            var b = w.Bots[0];
-            b.Routine.Clear();
-            return (w, b);
+            foreach (var bot in w.Bots) bot.Routine.Clear();
+            return (w, Farmhand(w));
         }
+
+        static Bot Farmhand(World w) => w.Bots.First(b => b.Kind == BotKind.Farmhand);
+
+        /// <summary>Drizzle, who runs the starter watering routine.</summary>
+        static Bot WaterBot(World w) => w.Bots.First(b => b.Kind == BotKind.WaterBot);
 
         static void Teleport(Bot b, int x, int y) => b.Position = new Cell(x, y);
 
@@ -223,7 +227,7 @@ namespace Farm.Tests
         public void Tracer_TimingMatchesTheRealDay()
         {
             var w = Farm();
-            var bot = w.Bots[0];
+            var bot = WaterBot(w);
             var trace = RoutineTracer.Trace(w, bot);
             Assert.AreEqual(0, trace.BlockedCount);
             CollectionAssert.Contains(trace.PickedTiles, StarterFarm.ParsnipPatch);
@@ -307,7 +311,7 @@ namespace Farm.Tests
         public void SaveAsCommand_CopiesTheRoutine()
         {
             var w = Farm();
-            var bot = w.Bots[0];
+            var bot = WaterBot(w);
             var saved = w.Library.Create("Morning", bot.Routine);
             CollectionAssert.AreEqual(bot.Routine, saved.Routine);
             bot.Routine.Clear();
@@ -331,7 +335,7 @@ namespace Farm.Tests
         public void Preview_MatchesTheRealDay_AndLeavesItUntouched()
         {
             var w = Farm();
-            var bot = w.Bots[0];
+            var bot = WaterBot(w);
             var preview = DayPreview.Run(w);
 
             Assert.AreEqual(DayPhase.Planning, w.Phase);
@@ -356,7 +360,7 @@ namespace Farm.Tests
         public void Preview_FromMidDay_ContinuesFromHere()
         {
             var w = Farm();
-            var bot = w.Bots[0];
+            var bot = WaterBot(w);
             w.StartDay();
             for (int i = 0; i < 20; i++) w.Step();
             var preview = DayPreview.Run(w);
@@ -369,6 +373,98 @@ namespace Farm.Tests
             }
         }
 
+        // ------------------------------------------------------------------ bot kinds & limits
+
+        [Test]
+        public void Starter_HasAFarmhandAndAWaterBot()
+        {
+            var w = Farm();
+            Assert.AreEqual(2, w.Bots.Count);
+            Assert.AreEqual(BotKind.Farmhand, w.Bots[0].Kind);
+            Assert.AreEqual(0, w.Bots[0].Routine.Count, "Sprocket's routine is the player's first job");
+            var d = WaterBot(w);
+            Assert.AreEqual(StarterFarm.WaterBotName, d.Name);
+            Assert.AreEqual(12, d.Routine.Count);
+            Assert.AreEqual(BotKind.WaterBot, w.Clone().Bots[1].Kind, "the preview copy keeps kinds");
+        }
+
+        [Test]
+        public void WaterBot_OnlyDoesWaterJobs()
+        {
+            var (w, _) = Blank();
+            var d = WaterBot(w);
+
+            Teleport(d, 17, 8); // next to the well
+            Assert.AreEqual(CommandResult.Ok, w.Execute(d, Command.Grab(Item.Water, 3)));
+            Assert.AreEqual(3, d.Load.Get(Item.Water));
+
+            Teleport(d, 5, 12); // next to the seed shed
+            Assert.AreEqual(CommandResult.CantDo, w.Execute(d, Command.Grab(Item.ParsnipSeeds, 3)));
+            Assert.AreEqual(Balance.StartingParsnipSeeds, w.SeedStock.Get(Item.ParsnipSeeds));
+
+            Teleport(d, 10, 5); // untilled field
+            Assert.AreEqual(CommandResult.CantDo, w.Execute(d, Command.Till));
+            Assert.IsFalse(w.Map[new Cell(10, 5)].Tilled);
+
+            Teleport(d, 6, 5); // a parsnip
+            Assert.AreEqual(CommandResult.CantDo, w.Execute(d, Command.Harvest));
+            Assert.AreEqual(CommandResult.CantDo, w.Execute(d, Command.Plant()));
+            Assert.AreEqual(CommandResult.Ok, w.Execute(d, Command.Water));
+            Assert.IsTrue(w.Map[new Cell(6, 5)].Watered);
+            Assert.AreEqual(CommandResult.Ok, w.Execute(d, Command.Step(Facing.North)));
+            Assert.IsTrue(CommandInfo.IsHardProblem(CommandResult.CantDo));
+        }
+
+        [Test]
+        public void WaterBot_SkipsJobsItCantDo_AndTheTracerAndPreviewAgree()
+        {
+            var w = Farm();
+            var d = WaterBot(w);
+            var chores = w.Library.Create("Chores", new[] { Command.Till, Command.Wait });
+            d.Routine.Insert(0, Command.Run(chores));
+            d.Routine.Insert(0, Command.Harvest);
+
+            Assert.IsFalse(BotKinds.CanRun(BotKind.WaterBot, w.Library, chores.Id));
+            Assert.IsTrue(BotKinds.CanRun(BotKind.WaterBot, w.Library, w.Library.Macros[0].Id), "Water 3 East");
+            Assert.IsTrue(BotKinds.CanRun(BotKind.Farmhand, w.Library, chores.Id));
+
+            var trace = RoutineTracer.Trace(w, d);
+            Assert.AreEqual(2, trace.CantDoCount);
+            Assert.AreEqual(0, RoutineTracer.Trace(w, Farmhand(w).Home, Facing.South, d.Routine).CantDoCount, "a farmhand could");
+
+            var preview = DayPreview.Run(w);
+            Assert.AreEqual(2, preview.ProblemsFor(d.Id).Count(p => p.Result == CommandResult.CantDo));
+            Assert.AreEqual(9, preview.TasksDone(d.Id, CommandType.Water), "the rest of the routine still runs");
+
+            w.StartDay();
+            int idleAt = -1;
+            while (w.Phase == DayPhase.Running)
+            {
+                w.Step();
+                if (d.LastResult == CommandResult.Idle)
+                {
+                    idleAt = w.Tick;
+                    break;
+                }
+            }
+            Assert.AreEqual(trace.Ticks + 1, idleAt, "a refused job takes one tick, in the trace and for real");
+        }
+
+        [Test]
+        public void Limits_RoomForManyCustomCommandsAndADayLongRoutine()
+        {
+            var w = Farm();
+            Assert.Greater(CommandLibrary.MaxMacros, 8);
+            while (!w.Library.IsFull) Assert.IsNotNull(w.Library.Create());
+            Assert.AreEqual(CommandLibrary.MaxMacros, w.Library.Macros.Count);
+            Assert.IsNull(w.Library.Create());
+            Assert.IsTrue(w.Library.Macros.All(m => !m.Name.StartsWith("Macro")));
+
+            var r = new Routine();
+            for (int i = 0; i < Balance.TicksPerDay; i++) Assert.IsTrue(r.Add(Command.Wait));
+            Assert.IsFalse(r.Add(Command.Wait));
+        }
+
         // ------------------------------------------------------------------ economy & season
 
         [Test]
@@ -379,9 +475,13 @@ namespace Farm.Tests
             Assert.IsTrue(w.TryBuySeeds(Crops.Potato, 4));
             Assert.AreEqual(4, w.SeedStock.Get(Item.PotatoSeeds));
             int gold = w.Gold;
-            Assert.IsNotNull(w.TryBuyBot());
-            Assert.AreEqual(2, w.Bots.Count);
-            Assert.AreEqual(gold - Balance.BotCost(1), w.Gold);
+            Assert.AreEqual(Balance.BotCost(0), w.NextBotCost, "the two starting bots don't raise the price");
+            var bought = w.TryBuyBot();
+            Assert.IsNotNull(bought);
+            Assert.AreEqual(BotKind.Farmhand, bought.Kind);
+            Assert.AreEqual(3, w.Bots.Count);
+            Assert.AreEqual(gold - Balance.BotCost(0), w.Gold);
+            Assert.AreEqual(Balance.BotCost(1), w.NextBotCost);
             Assert.IsTrue(w.TryUpgradeCapacity());
             Assert.IsTrue(w.Bots.All(b => b.Capacity == Balance.BotCapacity + Balance.CapacityUpgrade));
         }

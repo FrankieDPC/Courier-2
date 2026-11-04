@@ -21,6 +21,9 @@ namespace Farm.Game
         const float RowHeight = 34f;
         const float CellWidth = 160f;
 
+        /// <summary>"My commands" grows up to this many rows, then scrolls.</summary>
+        const int LibraryRowsShown = 4;
+
         GameController _game;
         World World => _game.World;
         CommandLibrary Book => _game.World.Library;
@@ -43,9 +46,13 @@ namespace Farm.Game
 
         Text _hint;
         CanvasGroup _sourcesGroup;
+        Text _libraryCaption;
+        RectTransform _libraryBox;
+        ScrollRect _libraryScroll;
         RectTransform _macroGrid;
         LayoutElement _macroGridSize;
         Text _noMacros;
+        bool _scrollLibraryToEnd;
         Text _listCaption;
         Text _status;
         RectTransform _listBox;
@@ -57,6 +64,7 @@ namespace Farm.Game
         Text _previewText;
 
         readonly List<CommandBlockView> _rows = new List<CommandBlockView>();
+        readonly List<CommandBlockView> _paletteBlocks = new List<CommandBlockView>();
         readonly List<CommandBlockView> _macroBlocks = new List<CommandBlockView>();
         readonly List<int> _macroIds = new List<int>();
 
@@ -106,20 +114,18 @@ namespace Farm.Game
             foreach (var t in CommandInfo.PaletteOrder)
             {
                 var cmd = Command.Default(t);
-                CommandBlockView.Create(this, palette, cmd, true, -1, CommandBlockView.Describe(cmd, Book));
+                _paletteBlocks.Add(CommandBlockView.Create(this, palette, cmd, true, -1, CommandBlockView.Describe(cmd, Book)));
             }
 
             var macroRow = UIFactory.Rect("My Commands Caption", sources);
             UIFactory.Size(macroRow, 26, -1, -1, 0);
             UIFactory.HStack(macroRow, 6).childForceExpandHeight = false;
-            var capText = UIFactory.Label("Label", macroRow, "MY COMMANDS", 13, Palette.InkSoft, TextAnchor.MiddleLeft, FontStyle.Bold);
-            UIFactory.Size(capText, 22, -1, 1);
+            _libraryCaption = UIFactory.Label("Label", macroRow, "MY COMMANDS", 13, Palette.InkSoft, TextAnchor.MiddleLeft, FontStyle.Bold);
+            UIFactory.Size(_libraryCaption, 22, -1, 1);
             var newMacro = UIFactory.Button("New Command", macroRow, "+ New command", Palette.AccentSoft, Palette.Accent, 13, NewMacro, out _);
             UIFactory.Size(newMacro, 24, 124);
 
-            _macroGrid = UIFactory.Rect("My Commands", sources);
-            UIFactory.Grid(_macroGrid, new Vector2(CellWidth, RowHeight), new Vector2(8, 6), 2);
-            _macroGridSize = UIFactory.Size(_macroGrid, RowHeight);
+            BuildLibrary(sources);
             _noMacros = UIFactory.Label("None", sources, "None yet. Custom commands are reusable chunks of commands.", 12, Palette.InkSoft);
             UIFactory.Size(_noMacros, 18);
 
@@ -187,6 +193,57 @@ namespace Farm.Game
             UIFactory.Size(del, 30, 72);
         }
 
+        /// <summary>The "my commands" grid: grows to <see cref="LibraryRowsShown"/> rows, then scrolls.</summary>
+        void BuildLibrary(Transform parent)
+        {
+            _libraryBox = UIFactory.Rect("My Commands", parent);
+            _macroGridSize = UIFactory.Size(_libraryBox, RowHeight);
+
+            var viewport = UIFactory.Rect("Viewport", _libraryBox);
+            UIFactory.Stretch(viewport);
+            viewport.gameObject.AddComponent<RectMask2D>();
+            var hit = viewport.gameObject.AddComponent<Image>(); // so the wheel also works between blocks
+            hit.color = new Color(0, 0, 0, 0);
+
+            _macroGrid = UIFactory.Rect("Grid", viewport);
+            _macroGrid.anchorMin = new Vector2(0, 1);
+            _macroGrid.anchorMax = new Vector2(1, 1);
+            _macroGrid.pivot = new Vector2(0.5f, 1);
+            _macroGrid.offsetMin = Vector2.zero;
+            _macroGrid.offsetMax = Vector2.zero;
+            UIFactory.Grid(_macroGrid, new Vector2(CellWidth, RowHeight), new Vector2(8, 6), 2);
+            UIFactory.FitHeight(_macroGrid);
+
+            _libraryScroll = _libraryBox.gameObject.AddComponent<ScrollRect>();
+            _libraryScroll.viewport = viewport;
+            _libraryScroll.content = _macroGrid;
+            _libraryScroll.horizontal = false;
+            _libraryScroll.vertical = true;
+            _libraryScroll.movementType = ScrollRect.MovementType.Clamped;
+            _libraryScroll.scrollSensitivity = 24f;
+
+            // A thin scrollbar in the gap right of the two columns, shown only when there's more to see.
+            var bar = UIFactory.Rect("Scrollbar", _libraryBox);
+            bar.anchorMin = new Vector2(1, 0);
+            bar.anchorMax = new Vector2(1, 1);
+            bar.pivot = new Vector2(1, 0.5f);
+            bar.sizeDelta = new Vector2(5, 0);
+            bar.anchoredPosition = Vector2.zero;
+            var track = bar.gameObject.AddComponent<Image>();
+            track.color = Palette.PanelSunken;
+            var area = UIFactory.Rect("Sliding Area", bar);
+            UIFactory.Stretch(area);
+            var handle = UIFactory.Panel("Handle", area, Palette.InkSoft, true, 0.25f);
+            UIFactory.Stretch(handle.rectTransform);
+            var scrollbar = bar.gameObject.AddComponent<Scrollbar>();
+            scrollbar.handleRect = handle.rectTransform;
+            scrollbar.targetGraphic = handle;
+            scrollbar.direction = Scrollbar.Direction.BottomToTop;
+            scrollbar.navigation = new Navigation { mode = Navigation.Mode.None }; // arrow keys pan the camera, not this
+            _libraryScroll.verticalScrollbar = scrollbar;
+            _libraryScroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
+        }
+
         void BuildList(Transform parent)
         {
             var box = UIFactory.Panel("List", parent, Palette.PanelSunken);
@@ -252,7 +309,11 @@ namespace Farm.Game
             _bot = _game.SelectedBot;
             if (_bot != null) _bot.Routine.Changed += Refresh;
             if (_macro == null) Refresh();
-            else RefreshFooter();
+            else
+            {
+                RefreshAvailability();
+                RefreshFooter();
+            }
             _shownIndex = int.MinValue;
         }
 
@@ -326,7 +387,34 @@ namespace Farm.Game
         void OnMacroEdited(Macro macro)
         {
             if (macro == _macro) Refresh();
-            else RefreshFooter(); // the bot's route may have changed
+            else
+            {
+                RefreshAvailability(); // a custom command may now hold jobs this bot can't do
+                RefreshFooter(); // the bot's route may have changed
+            }
+        }
+
+        // ------------------------------------------------------------------ what this bot can do
+
+        /// <summary>Editing a bot (not a shared custom command) that can't do every job.</summary>
+        bool Restricted => _macro == null && _bot != null && _bot.Kind != BotKind.Farmhand;
+
+        bool Allowed(Command c) => !Restricted || BotKinds.CanDoLine(_bot.Kind, Book, c);
+
+        string CantDoMessage(Command c)
+        {
+            string role = $"{_bot.Name} is a {BotKinds.Name(_bot.Kind).ToLowerInvariant()} ({BotKinds.Duties(_bot.Kind)})";
+            if (!c.IsRun) return role;
+            var m = Book.Get(c.MacroId);
+            return $"'{(m != null ? m.Name : "That command")}' has jobs {_bot.Name} can't do. {role}";
+        }
+
+        /// <summary>Fade the blocks and rows the bot being edited can't do.</summary>
+        void RefreshAvailability()
+        {
+            foreach (var b in _paletteBlocks) b.SetUnavailable(!Allowed(b.Command));
+            foreach (var b in _macroBlocks) b.SetUnavailable(!Allowed(b.Command));
+            foreach (var r in _rows) r.SetUnavailable(!Allowed(r.Command));
         }
 
         // ------------------------------------------------------------------ refresh
@@ -343,6 +431,7 @@ namespace Farm.Game
             if (_dragging) CancelDrag();
             _game.CancelPick(); // rows may have moved; PickTile is always started after the edit
             RebuildRows();
+            RefreshAvailability();
             RefreshHeader();
             RefreshFooter();
             _shownIndex = int.MinValue;
@@ -351,6 +440,7 @@ namespace Farm.Game
         void RebuildLibrary()
         {
             if (_dragging && _dragSource != null && _macroBlocks.Contains(_dragSource)) CancelDrag();
+            if (Book.Macros.Count > _macroIds.Count) _scrollLibraryToEnd = true; // new ones go at the end
             UIFactory.DestroyChildren(_macroGrid);
             _macroBlocks.Clear();
             _macroIds.Clear();
@@ -361,9 +451,12 @@ namespace Farm.Game
                 _macroIds.Add(macro.Id);
             }
             int rows = (Book.Macros.Count + 1) / 2;
-            _macroGrid.gameObject.SetActive(rows > 0);
-            _macroGridSize.preferredHeight = _macroGridSize.minHeight = Mathf.Max(0, rows * RowHeight + (rows - 1) * 6);
+            int shown = Mathf.Min(rows, LibraryRowsShown);
+            _libraryBox.gameObject.SetActive(rows > 0);
+            _macroGridSize.preferredHeight = _macroGridSize.minHeight = Mathf.Max(0, shown * RowHeight + (shown - 1) * 6);
             _noMacros.gameObject.SetActive(rows == 0);
+            _libraryCaption.text = $"MY COMMANDS  <size=11>{Book.Macros.Count}/{CommandLibrary.MaxMacros}</size>";
+            RefreshAvailability();
         }
 
         void RebuildRows()
@@ -423,12 +516,17 @@ namespace Farm.Game
 
             _titleSwatch.gameObject.SetActive(true);
             _titleSwatch.color = Palette.Bot(_bot.Id);
-            _title.text = _bot.Name;
+            _title.text = _bot.Kind == BotKind.Farmhand
+                ? _bot.Name
+                : $"{_bot.Name}  <size=12><color={UIFactory.Hex(Palette.For(Item.Water))}>{BotKinds.Name(_bot.Kind).ToUpperInvariant()}</color></size>";
             _loopText.text = _bot.Loop ? "Loop: on" : "Loop: off";
             _clearButton.interactable = editable;
-            _hint.text = editable
-                ? "Drag blocks in. Click a row to change its option, -/+ for amounts, 'pick' to choose a tile. Drag out to delete. Tasks act on the tile the bot stands on."
-                : "Locked while the day runs. Pause (Space) to make changes.";
+            if (!editable)
+                _hint.text = "Locked while the day runs. Pause (Space) to make changes.";
+            else if (Restricted)
+                _hint.text = $"{_bot.Name} only does water jobs: moving, grabbing water and watering. Faded blocks are jobs it can't do. Click a row to change it; drag out to delete.";
+            else
+                _hint.text = "Drag blocks in. Click a row to change its option, -/+ for amounts, 'pick' to choose a tile. Drag out to delete. Tasks act on the tile the bot stands on.";
         }
 
         void RefreshFooter()
@@ -469,6 +567,8 @@ namespace Farm.Game
                 lines.Add(UIFactory.Colour("Custom commands nest too deeply.", Palette.Error));
             if (trace.BlockedCount > 0)
                 lines.Add(UIFactory.Colour($"{trace.BlockedCount} move(s) are blocked or unreachable (red marker).", Palette.Error));
+            if (trace.CantDoCount > 0)
+                lines.Add(UIFactory.Colour($"{trace.CantDoCount} job(s) {_bot.Name} can't do will fail (faded rows).", Palette.Error));
             lines.Add(_bot.Loop ? "Repeats until dusk." : "Runs once, then waits. Press P to preview the day.");
 
             _footer.text = string.Join("\n", lines);
@@ -484,6 +584,12 @@ namespace Farm.Game
 
             if (CanEdit != _shownEditable) RefreshHeader();
             if (_dragging) AutoScroll();
+            if (_scrollLibraryToEnd)
+            {
+                _scrollLibraryToEnd = false;
+                Canvas.ForceUpdateCanvases();
+                _libraryScroll.verticalNormalizedPosition = 0f;
+            }
 
             var preview = _game.Preview;
             bool previewOpen = preview != null && preview.IsOpen;
@@ -540,6 +646,11 @@ namespace Farm.Game
         void Insert(int index, Command c)
         {
             if (!CanEdit) return;
+            if (!Allowed(c))
+            {
+                _game.ShowToast(CantDoMessage(c));
+                return;
+            }
             if (c.IsRun && !Book.CanRunFrom(_macro, c.MacroId))
             {
                 _game.ShowToast("A custom command can't run itself, even through another one");
@@ -569,6 +680,13 @@ namespace Farm.Game
             if (!CanEdit) return;
             var before = Current[index];
             var after = before.WithNextOption();
+            for (int guard = 0; guard < 16 && !Allowed(after) && !after.Equals(before); guard++)
+                after = after.WithNextOption(); // e.g. a water bot's Grab skips the seeds
+            if (after.Equals(before) || !Allowed(after))
+            {
+                if (!before.Equals(before.WithNextOption())) _game.ShowToast(CantDoMessage(before.WithNextOption()));
+                return;
+            }
             if (after.NeedsTile && !before.NeedsTile && _bot != null) after.Tile = _bot.Home;
             Current.Set(index, after);
             if (after.NeedsTile) PickTile(index);
@@ -678,6 +796,11 @@ namespace Farm.Game
         public void BeginDrag(CommandBlockView source, PointerEventData e)
         {
             if (!CanEdit || _dragging) return;
+            if (source.FromPalette && !Allowed(source.Command))
+            {
+                _game.ShowToast(CantDoMessage(source.Command));
+                return;
+            }
             _dragging = true;
             _dragSource = source;
 

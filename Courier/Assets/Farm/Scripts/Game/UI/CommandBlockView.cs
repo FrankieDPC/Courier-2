@@ -18,6 +18,8 @@ namespace Farm.Game
         Text _number;
         Text _label;
         CanvasGroup _group;
+        bool _dimmed;
+        bool _unavailable;
 
         public Command Command { get; private set; }
         public bool FromPalette { get; private set; }
@@ -51,7 +53,7 @@ namespace Farm.Game
             {
                 view._number = UIFactory.Label("No", bg.transform, (index + 1).ToString("00"), 13, new Color(1f, 1f, 1f, 0.75f));
                 UIFactory.Stretch(view._number.rectTransform, 8, 0, 0, 0);
-                left = 36f;
+                left = 44f; // room for "> 150"
 
                 int i = index;
                 if (cmd.HasCount)
@@ -113,7 +115,22 @@ namespace Farm.Game
             transform.localScale = current ? new Vector3(1.03f, 1.03f, 1f) : Vector3.one;
         }
 
-        public void SetDimmed(bool dimmed) => _group.alpha = dimmed ? 0.35f : 1f;
+        /// <summary>Faded while it's being dragged.</summary>
+        public void SetDimmed(bool dimmed)
+        {
+            _dimmed = dimmed;
+            ApplyAlpha();
+        }
+
+        /// <summary>Faded because the bot being edited can't do this job (e.g. a water bot and Till).</summary>
+        public void SetUnavailable(bool unavailable)
+        {
+            if (_unavailable == unavailable) return;
+            _unavailable = unavailable;
+            ApplyAlpha();
+        }
+
+        void ApplyAlpha() => _group.alpha = _dimmed ? 0.35f : _unavailable ? 0.4f : 1f;
 
         // Only the left button drags blocks; right/middle drags belong to the camera.
         public void OnBeginDrag(PointerEventData e)

@@ -4,7 +4,7 @@ using UnityEngine;
 namespace Farm.Game
 {
     /// <summary>
-    /// Placeholder farm bot: a little boxy robot in a straw hat, with a stack of crates on its back
+    /// Placeholder farm bot: a little boxy robot in a straw hat (water bots wear a water tank instead), with a stack of crates on its back
     /// showing how full its load is (coloured by what it's mostly carrying). Bobs while it works and
     /// shows "!" when its last command had a problem. Interpolates between ticks.
     /// </summary>
@@ -32,7 +32,7 @@ namespace Farm.Game
             var color = Palette.Bot(b.Id);
 
             _selection = Shapes.Box("Selection", transform, new Vector3(0f, 0.055f, 0f), new Vector3(0.78f, 0.02f, 0.78f), Palette.Selection, false); // above tilled soil
-            _body = BuildModel(transform, color, Palette.Hex("#E9C46A"));
+            _body = BuildModel(transform, color, b.Kind);
 
             _load = new GameObject[LoadBlocks];
             for (int i = 0; i < LoadBlocks; i++)
@@ -43,8 +43,8 @@ namespace Farm.Game
             Snap();
         }
 
-        /// <summary>The bot model, shared with the preview ghost.</summary>
-        public static Transform BuildModel(Transform parent, Color color, Color hat, bool shadows = true)
+        /// <summary>The bot model, shared with the preview ghost. <paramref name="accent"/> overrides the hat/tank colour.</summary>
+        public static Transform BuildModel(Transform parent, Color color, BotKind kind, Color? accent = null, bool shadows = true)
         {
             var body = new GameObject("Body").transform;
             body.SetParent(parent, false);
@@ -52,8 +52,21 @@ namespace Farm.Game
             Shapes.Box("Torso", body, new Vector3(0f, 0.28f, 0f), new Vector3(0.4f, 0.32f, 0.32f), color, shadows);
             Shapes.Box("Head", body, new Vector3(0f, 0.55f, 0.02f), new Vector3(0.3f, 0.22f, 0.26f), Palette.Shade(color, 1.15f), shadows);
             Shapes.Box("Eye", body, new Vector3(0f, 0.57f, 0.16f), new Vector3(0.18f, 0.06f, 0.03f), Palette.Hex("#BFF7FF"), false);
-            Shapes.Box("Brim", body, new Vector3(0f, 0.68f, 0.02f), new Vector3(0.46f, 0.03f, 0.42f), hat, shadows);
-            Shapes.Box("Crown", body, new Vector3(0f, 0.75f, 0.02f), new Vector3(0.24f, 0.12f, 0.22f), hat, shadows);
+            if (kind == BotKind.WaterBot)
+            {
+                // A water tank where the hat would be, with a spout over the eye.
+                var tank = accent ?? Palette.For(Item.Water);
+                var trim = Palette.Shade(tank, 0.7f);
+                Shapes.Box("Tank", body, new Vector3(0f, 0.75f, -0.01f), new Vector3(0.3f, 0.18f, 0.26f), tank, shadows);
+                Shapes.Box("Lid", body, new Vector3(0f, 0.855f, -0.01f), new Vector3(0.14f, 0.03f, 0.12f), trim, shadows);
+                Shapes.Box("Spout", body, new Vector3(0f, 0.79f, 0.17f), new Vector3(0.06f, 0.05f, 0.12f), trim, shadows);
+            }
+            else
+            {
+                var hat = accent ?? Palette.Hex("#E9C46A");
+                Shapes.Box("Brim", body, new Vector3(0f, 0.68f, 0.02f), new Vector3(0.46f, 0.03f, 0.42f), hat, shadows);
+                Shapes.Box("Crown", body, new Vector3(0f, 0.75f, 0.02f), new Vector3(0.24f, 0.12f, 0.22f), hat, shadows);
+            }
             return body;
         }
 

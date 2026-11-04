@@ -62,6 +62,9 @@ namespace Farm.Sim
         LoadFull,
         UnknownCommand,
         TooDeep,
+
+        /// <summary>Not a job this kind of bot can do (e.g. a water bot told to till).</summary>
+        CantDo,
     }
 
     [Serializable]
@@ -290,6 +293,7 @@ namespace Farm.Sim
                 case CommandResult.LoadFull: return "Load too heavy";
                 case CommandResult.UnknownCommand: return "That custom command no longer exists";
                 case CommandResult.TooDeep: return "Custom commands nested too deeply";
+                case CommandResult.CantDo: return "This bot can't do that job";
                 default: return "";
             }
         }
@@ -298,7 +302,8 @@ namespace Farm.Sim
     /// <summary>An ordered list of commands: a bot's daily routine or a custom command's body.</summary>
     public sealed class Routine : IReadOnlyList<Command>
     {
-        public const int MaxLength = 64;
+        /// <summary>Longest routine or custom command. See <see cref="Balance.MaxRoutineLength"/>.</summary>
+        public const int MaxLength = Balance.MaxRoutineLength;
 
         readonly List<Command> _commands = new List<Command>();
 

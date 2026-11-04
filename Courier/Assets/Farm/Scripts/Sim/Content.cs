@@ -25,12 +25,25 @@ namespace Farm.Sim
         /// <summary>Carry weight per bot. Water and parsnips weigh 1, potatoes 2, cauliflowers 3, seeds 0.</summary>
         public const int BotCapacity = 10;
         public const int CapacityUpgrade = 5;
-        public const int MaxGrab = 20;
+
+        /// <summary>Most a single Grab can ask for. The bot still only takes what its weight limit allows.</summary>
+        public const int MaxGrab = 99;
+
+        // Editor limits.
+        /// <summary>
+        /// Longest routine or custom command. Every command except Run takes at least a tick, so a
+        /// routine longer than the day could never finish.
+        /// </summary>
+        public const int MaxRoutineLength = TicksPerDay;
+
+        /// <summary>How many custom commands the farm can keep.</summary>
+        public const int MaxCustomCommands = 32;
 
         /// <summary>At dusk, produce a bot is still carrying goes in the shipping bin (true) or is lost (false).</summary>
         public static readonly bool ShipProduceAtDusk = true;
 
-        public static int BotCost(int owned) => 150 + 100 * (owned - 1);
+        /// <summary>Price of the next bot, given how many have been bought so far (starting bots are free).</summary>
+        public static int BotCost(int bought) => 150 + 100 * bought;
         public static int CapacityCost(int level) => 120 + 120 * level;
 
         static readonly string[] s_BotNames = { "Sprocket", "Bolt", "Cog", "Rivet", "Gizmo", "Widget", "Spanner", "Tinker" };
@@ -65,6 +78,7 @@ namespace Farm.Sim
         public static readonly Cell ParsnipPatch = new Cell(5, 6);
 
         public const string TutorialCommandName = "Water 3 East";
+        public const string WaterBotName = "Drizzle";
 
         public static World Create()
         {
@@ -81,8 +95,12 @@ namespace Farm.Sim
                 Command.Water,
             });
 
-            // Sprocket waters the starter parsnips once a day.
-            var bot = world.AddBot();
+            // Sprocket is a farmhand that can do any job. Its routine starts empty: giving it one is
+            // the player's first task (plant the tilled rows, harvest on day 4).
+            world.AddBot();
+
+            // Drizzle is a water bot (water jobs only). It waters the starter parsnips once a day.
+            var bot = world.AddBot(WaterBotName, BotKind.WaterBot);
             bot.Routine.SetAll(new[]
             {
                 Command.GoTo(GoTarget.Well),

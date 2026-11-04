@@ -268,7 +268,7 @@ namespace Farm.Game
             var b = World.TryBuyBot();
             if (b == null)
             {
-                ShowToast($"A new bot costs {cost}g");
+                ShowToast($"A new farmhand costs {cost}g");
                 return;
             }
             ShowToast($"{b.Name} whirrs to life by the door");

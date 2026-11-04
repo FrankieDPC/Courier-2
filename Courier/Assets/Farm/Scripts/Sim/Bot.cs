@@ -36,6 +36,9 @@ namespace Farm.Sim
         public int Id { get; }
         public string Name { get; set; }
 
+        /// <summary>What jobs this bot can do. Fixed when it's built.</summary>
+        public BotKind Kind { get; }
+
         public Cell Home { get; internal set; }
         public Facing HomeFacing { get; internal set; }
         public Cell Position { get; internal set; }
@@ -71,12 +74,14 @@ namespace Farm.Sim
         public int ProblemsToday { get; internal set; }
 
         public bool IsCarrying => !Load.IsEmpty;
+        public bool CanDo(Command c) => BotKinds.CanDo(Kind, c);
         public int FreeWeight => Capacity - Load.Weight;
 
-        internal Bot(int id, string name, Cell home, Facing homeFacing, int capacity)
+        internal Bot(int id, string name, Cell home, Facing homeFacing, int capacity, BotKind kind = BotKind.Farmhand)
         {
             Id = id;
             Name = name;
+            Kind = kind;
             Home = home;
             HomeFacing = homeFacing;
             Capacity = capacity;

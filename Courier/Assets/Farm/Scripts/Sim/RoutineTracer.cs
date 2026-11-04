@@ -8,6 +8,7 @@ namespace Farm.Sim
         public Cell Position;   // after this tick
         public Facing Facing;   // after this tick
         public bool Blocked;    // a Step into something solid, or a Go to with no route
+        public bool CantDo;     // a job this kind of bot can't do (it fails and the routine moves on)
         public int Depth;       // 0 = the bot's own routine, 1+ = inside custom commands
     }
 
@@ -20,6 +21,9 @@ namespace Farm.Sim
         public Cell End;
         public Facing EndFacing;
         public int BlockedCount;
+
+        /// <summary>Jobs in the routine (custom commands included) that this kind of bot can't do.</summary>
+        public int CantDoCount;
         public bool HitDepthLimit;
 
         /// <summary>Ticks one pass takes if every task succeeds (Run is free).</summary>
@@ -36,26 +40,35 @@ namespace Farm.Sim
     {
         const int MaxSteps = 4000;
 
-        public static TraceResult Trace(World world, Cell start, Facing facing, IReadOnlyList<Command> routine)
+        public static TraceResult Trace(World world, Cell start, Facing facing, IReadOnlyList<Command> routine,
+            BotKind kind = BotKind.Farmhand)
         {
             var result = new TraceResult { Start = start, StartFacing = facing };
             var pos = start;
             var dir = facing;
-            Walk(world, routine, 0, ref pos, ref dir, result);
+            Walk(world, kind, routine, 0, ref pos, ref dir, result);
             result.End = pos;
             result.EndFacing = dir;
             return result;
         }
 
-        public static TraceResult Trace(World world, Bot b) => Trace(world, b.Home, b.HomeFacing, b.Routine);
+        public static TraceResult Trace(World world, Bot b) => Trace(world, b.Home, b.HomeFacing, b.Routine, b.Kind);
 
-        static void Walk(World world, IReadOnlyList<Command> routine, int depth, ref Cell pos, ref Facing dir, TraceResult result)
+        static void Walk(World world, BotKind kind, IReadOnlyList<Command> routine, int depth, ref Cell pos, ref Facing dir, TraceResult result)
         {
             var map = world.Map;
             for (int i = 0; i < routine.Count; i++)
             {
                 if (result.Steps.Count >= MaxSteps) return;
                 var c = routine[i];
+
+                if (!BotKinds.CanDo(kind, c))
+                {
+                    // The real bot refuses it in a single tick and moves on.
+                    result.CantDoCount++;
+                    result.Steps.Add(new TraceStep { Command = c, Position = pos, Facing = dir, Depth = depth, CantDo = true });
+                    continue;
+                }
 
                 switch (c.Type)
                 {
@@ -68,7 +81,7 @@ namespace Farm.Sim
                             result.HitDepthLimit = true;
                             continue;
                         }
-                        Walk(world, macro.Routine, depth + 1, ref pos, ref dir, result);
+                        Walk(world, kind, macro.Routine, depth + 1, ref pos, ref dir, result);
                         continue;
                     }
 

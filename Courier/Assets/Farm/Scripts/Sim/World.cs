@@ -88,10 +88,10 @@ namespace Farm.Sim
 
         // ------------------------------------------------------------------ setup & shop
 
-        public Bot AddBot(string name = null)
+        public Bot AddBot(string name = null, BotKind kind = BotKind.Farmhand)
         {
             int id = _nextBotId++;
-            var b = new Bot(id, name ?? Balance.BotName(id), Map.Home, Facing.South, Balance.BotCapacity + CapacityLevel * Balance.CapacityUpgrade);
+            var b = new Bot(id, name ?? Balance.BotName(id), Map.Home, Facing.South, Balance.BotCapacity + CapacityLevel * Balance.CapacityUpgrade, kind);
             _bots.Add(b);
             BotAdded?.Invoke(b);
             return b;
@@ -103,7 +103,10 @@ namespace Farm.Sim
             GoldChanged?.Invoke();
         }
 
-        public int NextBotCost => Balance.BotCost(_bots.Count);
+        /// <summary>Bots bought in the shop (starting bots don't count towards the price).</summary>
+        public int BotsBought { get; private set; }
+
+        public int NextBotCost => Balance.BotCost(BotsBought);
         public int NextCapacityCost => Balance.CapacityCost(CapacityLevel);
 
         public bool TryBuySeeds(CropType crop, int count)
@@ -120,6 +123,7 @@ namespace Farm.Sim
             int cost = NextBotCost;
             if (IsGameOver || Gold < cost) return null;
             AddGold(-cost);
+            BotsBought++;
             return AddBot();
         }
 

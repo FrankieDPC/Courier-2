@@ -39,6 +39,7 @@ namespace Farm.Sim
         public CommandResult Execute(Bot b, Command cmd, out bool finished)
         {
             finished = true;
+            if (!b.CanDo(cmd)) return CommandResult.CantDo; // takes the tick, then the routine moves on
             switch (cmd.Type)
             {
                 case CommandType.GoTo: return GoTo(b, cmd, out finished);

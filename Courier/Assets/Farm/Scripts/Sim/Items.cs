@@ -48,6 +48,9 @@ namespace Farm.Sim
         }
 
         public static bool IsSeed(Item i) => Crops.ForSeed(i) != null;
+
+        /// <summary>Liquids: what water bots can grab. Add new fluids (e.g. liquid fertiliser) here.</summary>
+        public static bool IsFluid(Item i) => i == Item.Water;
         public static bool IsProduce(Item i) => Crops.ForProduce(i) != null;
 
         public static string Describe(Item i, int count) => $"{count} {Name(i, count)}";

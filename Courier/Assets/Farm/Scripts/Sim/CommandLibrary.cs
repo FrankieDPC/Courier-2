@@ -25,7 +25,8 @@ namespace Farm.Sim
     /// </summary>
     public sealed class CommandLibrary
     {
-        public const int MaxMacros = 8;
+        /// <summary>See <see cref="Balance.MaxCustomCommands"/>.</summary>
+        public const int MaxMacros = Balance.MaxCustomCommands;
         public const int MaxNameLength = 18;
 
         /// <summary>How deep custom commands may nest before it's treated as a runaway loop.</summary>
@@ -148,7 +149,7 @@ namespace Farm.Sim
                     if (s.Name == n) used = true;
                 if (!used) return n;
             }
-            return "Macro " + _nextId;
+            return "Command " + _nextId;
         }
 
         static string Clean(string name)
