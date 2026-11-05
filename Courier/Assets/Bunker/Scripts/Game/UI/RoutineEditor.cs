@@ -161,7 +161,7 @@ namespace Bunker.Game
             _game.StateChanged += OnStateChanged;
             Book.Changed += OnLibraryChanged;
             Book.MacroEdited += OnMacroEdited;
-            World.TileChanged += OnTileChanged;
+            World.GroundChanged += OnGroundChanged;
             OnSelectionChanged();
             RebuildLibrary();
             Refresh();
@@ -298,7 +298,7 @@ namespace Bunker.Game
             _game.StateChanged -= OnStateChanged;
             Book.Changed -= OnLibraryChanged;
             Book.MacroEdited -= OnMacroEdited;
-            World.TileChanged -= OnTileChanged;
+            World.GroundChanged -= OnGroundChanged;
             if (_bot != null) _bot.Routine.Changed -= Refresh;
         }
 
@@ -386,8 +386,8 @@ namespace Bunker.Game
             return true;
         }
 
-        /// <summary>The ground changed (something cleared, tilled...): routes may have opened up.</summary>
-        void OnTileChanged(Cell _) => _footerDirty = true;
+        /// <summary>A tile was cleared: routes may have opened up.</summary>
+        void OnGroundChanged(Cell _) => _footerDirty = true;
 
         void OnMacroEdited(Macro macro)
         {
@@ -641,7 +641,7 @@ namespace Bunker.Game
                 for (int i = 0; i < _rows.Count; i++) _rows[i].SetState(i == idx, _bot.LastResult);
 
                 string who = _macro != null ? _bot.Name + ": " : "";
-                string cargo = _bot.IsCarrying ? $"carrying {_bot.Load} ({_bot.Load.Weight}/{_bot.Capacity})" : "empty";
+                string cargo = GameUI.LoadText(_bot);
                 if (running && idx >= 0)
                     _status.text = $"{who}line {idx + 1}: {CommandInfo.Describe(_bot.LastResult)}";
                 else if (running)

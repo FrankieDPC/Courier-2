@@ -21,6 +21,11 @@ namespace Bunker.Sim
         /// <summary>Everything handed in at the hatch today (Deliver, plus unloading at night).</summary>
         public Inventory Delivered = new Inventory();
         public int TilesCleared;
+
+        /// <summary>Crops that ripened during the day.</summary>
+        public int CropsRipened;
+
+        /// <summary>At nightfall: crops still growing (wet soil), crops in dry soil (not growing), crops ripe and waiting.</summary>
         public int CropsWatered;
         public int CropsDry;
         public int CropsRipe;
@@ -37,9 +42,9 @@ namespace Bunker.Sim
     /// <summary>
     /// The whole surface simulation. Deterministic and engine-free. Time never stops on its own: call
     /// <see cref="Step"/> once per tick. You (the player bot) act on whatever <see cref="SetPlayerCommand"/>
-    /// last asked for; other bots loop their routines. When the day's last tick passes, night falls
-    /// instantly: everyone is reset at the hatch, watered crops grow a day, every few nights the bunker
-    /// eats a ration, and the next morning begins.
+    /// last asked for; other bots loop their routines. Watered soil dries a little every tick and crops
+    /// grow only while it's wet. When the day's last tick passes, night falls instantly: everyone is
+    /// reset at the hatch, every few nights the bunker eats a ration, and the next morning begins.
     /// </summary>
     public sealed partial class World
     {
@@ -47,6 +52,7 @@ namespace Bunker.Sim
         readonly Inventory _deliveredToday = new Inventory();
         int _nextBotId = 1;
         int _tilesClearedToday;
+        int _ripenedToday;
 
         bool _hasPlayerNext;
         Command _playerNext;
@@ -96,7 +102,11 @@ namespace Bunker.Sim
         public event Action<DayReport> DayEnded;
         public event Action Ticked;
         public event Action<Outcome> GameOver;
+        /// <summary>A tile looks different (tilled, planted, wetter or drier, a crop grew a stage...).</summary>
         public event Action<Cell> TileChanged;
+
+        /// <summary>A tile became walkable (overgrowth cleared): routes may have opened up.</summary>
+        public event Action<Cell> GroundChanged;
 
         /// <summary>You did something (or tried to): the command and how it went. For toasts and sounds.</summary>
         public event Action<Command, CommandResult> PlayerActed;
@@ -119,10 +129,18 @@ namespace Bunker.Sim
         public Bot AddBot(string name, BotKind kind)
         {
             int id = _nextBotId++;
-            var b = new Bot(id, name, Map.Home, Map.HomeFacing, Balance.BotCapacity + CapacityLevel * Balance.CapacityUpgrade, kind);
+            var b = new Bot(id, name, Map.Home, Map.HomeFacing, CapacityFor(kind), kind);
             _bots.Add(b);
             BotAdded?.Invoke(b);
             return b;
+        }
+
+        int CapacityFor(BotKind kind) => BotKinds.Stats(kind).Capacity + CapacityLevel * Balance.CapacityUpgrade;
+
+        /// <summary>Re-reads bot stats (after the BunkerData asset is edited): carry capacities follow.</summary>
+        public void RefreshStats()
+        {
+            foreach (var b in _bots) b.Capacity = CapacityFor(b.Kind);
         }
 
         /// <summary>Deletes a custom command and removes every Run of it from every routine.</summary>
@@ -152,6 +170,29 @@ namespace Bunker.Sim
 
         /// <summary>True while your robot is partway through a job (clearing, tilling...).</summary>
         public bool PlayerBusy => Player != null && Player.HasJob;
+
+        /// <summary>
+        /// Puts your robot on a tile, facing a way. The game moves you freely between tiles and tells the
+        /// sim which tile you're on; jobs then work on the tile in front of that. Ignored mid-job (cancel
+        /// it first) and for tiles you can't stand on.
+        /// </summary>
+        public void SetPlayerPose(Cell cell, Facing facing)
+        {
+            var p = Player;
+            if (p == null || p.HasJob || !Map.IsWalkable(cell)) return;
+            p.Position = p.PreviousPosition = cell;
+            p.Facing = p.PreviousFacing = facing;
+        }
+
+        /// <summary>Drops the job your robot is partway through (walking away from it).</summary>
+        public void CancelPlayerJob()
+        {
+            var p = Player;
+            if (p == null || !p.HasJob) return;
+            p.HasJob = false;
+            p.WorkLeft = 0;
+            p.LastResult = CommandResult.Idle;
+        }
 
         void RunPlayer(Bot b)
         {
@@ -189,6 +230,7 @@ namespace Bunker.Sim
                 if (b.IsPlayer) RunPlayer(b);
                 else RunNextCommand(b);
             }
+            UpdateSoil();
 
             Tick++;
             Ticked?.Invoke();
@@ -209,12 +251,41 @@ namespace Bunker.Sim
         }
 
         /// <summary>
-        /// Night: everyone is reset at the hatch (loads handed in, routines back to line 1), watered crops
-        /// grow, the soil dries, maybe the bunker eats a ration, then it's the next morning.
+        /// Every tick: wet soil loses a tick of water and the crop on it grows a tick. Raises TileChanged
+        /// only when something visible changes (a crop's stage, or the soil going damp or dry).
+        /// </summary>
+        void UpdateSoil()
+        {
+            var wet = Map.Wet;
+            int kept = 0;
+            for (int i = 0; i < wet.Count; i++)
+            {
+                var t = wet[i];
+                if (t.Moisture > 0)
+                {
+                    int wetBefore = t.WetLevel;
+                    int stageBefore = t.Stage;
+                    if (t.HasCrop && !t.IsRipe)
+                    {
+                        t.Growth++;
+                        if (t.IsRipe) _ripenedToday++;
+                    }
+                    t.Moisture--;
+                    if (t.WetLevel != wetBefore || t.Stage != stageBefore) TileChanged?.Invoke(t.Cell);
+                }
+                if (t.Moisture > 0) wet[kept++] = t;
+                else t.OnWetList = false;
+            }
+            wet.RemoveRange(kept, wet.Count - kept);
+        }
+
+        /// <summary>
+        /// Night: everyone is reset at the hatch (loads handed in, routines back to line 1), maybe the
+        /// bunker eats a ration, then it's the next morning. Crops and soil carry on as they were.
         /// </summary>
         void Nightfall()
         {
-            var report = new DayReport { Day = Day, TilesCleared = _tilesClearedToday };
+            var report = new DayReport { Day = Day, TilesCleared = _tilesClearedToday, CropsRipened = _ripenedToday };
             foreach (var b in _bots) report.Problems += b.ProblemsToday;
 
             _hasPlayerNext = false;
@@ -224,22 +295,10 @@ namespace Bunker.Sim
             foreach (var c in Map.AllCells())
             {
                 var t = Map[c];
-                if (t.HasCrop && !t.IsRipe)
-                {
-                    if (t.Watered)
-                    {
-                        t.Growth++;
-                        report.CropsWatered++;
-                    }
-                    else report.CropsDry++;
-                }
+                if (!t.HasCrop) continue;
                 if (t.IsRipe) report.CropsRipe++;
-                if (t.Watered)
-                {
-                    t.Watered = false;
-                    TileChanged?.Invoke(c);
-                }
-                else if (t.HasCrop) TileChanged?.Invoke(c);
+                else if (t.Watered) report.CropsWatered++;
+                else report.CropsDry++;
             }
 
             if (Day % RationEvery == 0) ServeRation(report);
@@ -255,6 +314,7 @@ namespace Bunker.Sim
 
             _deliveredToday.Clear();
             _tilesClearedToday = 0;
+            _ripenedToday = 0;
             foreach (var b in _bots) b.ResetDailyStats();
 
             DayEnded?.Invoke(report);

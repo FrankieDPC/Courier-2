@@ -36,9 +36,9 @@ namespace Bunker.Game
 
             _game.SelectionChanged += OnSelectionChanged;
             _game.StateChanged += MarkDirty;
-                        _game.World.Library.Changed += MarkDirty;
+            _game.World.Library.Changed += MarkDirty;
             _game.World.Library.MacroEdited += OnSpellEdited;
-            _game.World.TileChanged += OnTileChanged;
+            _game.World.GroundChanged += OnGroundChanged;
             OnSelectionChanged();
         }
 
@@ -47,9 +47,9 @@ namespace Bunker.Game
             if (_game == null) return;
             _game.SelectionChanged -= OnSelectionChanged;
             _game.StateChanged -= MarkDirty;
-                        _game.World.Library.Changed -= MarkDirty;
+            _game.World.Library.Changed -= MarkDirty;
             _game.World.Library.MacroEdited -= OnSpellEdited;
-            _game.World.TileChanged -= OnTileChanged;
+            _game.World.GroundChanged -= OnGroundChanged;
             if (_bot != null) _bot.Routine.Changed -= MarkDirty;
         }
 
@@ -64,7 +64,7 @@ namespace Bunker.Game
 
         void MarkDirty() => _dirty = true;
         void OnSpellEdited(Macro _) => _dirty = true;
-        void OnTileChanged(Cell _) => _dirty = true;
+        void OnGroundChanged(Cell _) => _dirty = true; // a cleared tile may open up a route
 
         void LateUpdate()
         {

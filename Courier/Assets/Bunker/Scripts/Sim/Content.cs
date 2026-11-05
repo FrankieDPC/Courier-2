@@ -12,6 +12,9 @@ namespace Bunker.Sim
         public const int DayStartMinutes = 6 * 60;
         public const int DayEndMinutes = 26 * 60;
 
+        /// <summary>Ticks in one in-game hour (180: 45 real seconds at 1x).</summary>
+        public const int TicksPerHour = TicksPerDay * 60 / (DayEndMinutes - DayStartMinutes);
+
         // Rations: every few nights the bunker eats from the stores.
         public const int RationEvery = 3;
 
@@ -38,6 +41,7 @@ namespace Bunker.Sim
         public const int HarvestTicks = 3;
         public const int GrabTicks = 2;
         public const int DeliverTicks = 2;
+        public const int DumpTicks = 1;
 
         /// <summary>How long clearing takes, by what's in the way.</summary>
         public static int ClearTicks(Debris d)
@@ -110,24 +114,13 @@ namespace Bunker.Sim
         /// <summary>Seeds your "use" key takes from the hatch (of each kind in stock, if you haven't picked one).</summary>
         public const int SeedsPerGrab = 9;
 
-        // Workshop recipes (paid from the stores).
-        public const int WaterBotScrap = 6;
-        public const int WaterBotCircuits = 1;
-        public const int WaterBotFibre = 2;
-        public const int FarmhandScrap = 8;
-        public const int FarmhandCircuits = 2;
-        public const int FarmhandWood = 2;
-        public const int FarmhandFibre = 4;
-
+        // Workshop: bot prices are in BotKinds.DefaultStats (and the BunkerData asset).
         /// <summary>Each bot you've built makes the next one cost this much more scrap.</summary>
         public const int ExtraScrapPerBot = 2;
 
         /// <summary>Bigger tanks cost this much scrap and wood times the next level.</summary>
         public const int TankScrap = 3;
         public const int TankWood = 3;
-
-        /// <summary>Seeds you get from saving one stored crop.</summary>
-        public const int SeedsSaved = 2;
 
         // Editor limits.
         /// <summary>Longest routine or custom command (routines loop, so this is per pass).</summary>
@@ -147,6 +140,16 @@ namespace Bunker.Sim
         }
     }
 
+    /// <summary>Bot and crop stats are tunable at runtime (from the BunkerData asset); this puts them back to the built-in numbers.</summary>
+    public static class GameRules
+    {
+        public static void ResetToDefaults()
+        {
+            BotKinds.ResetDefaults();
+            Crops.ResetDefaults();
+        }
+    }
+
     /// <summary>The surface outside the bunker. Edit the ASCII layout to redesign it (legend in <see cref="SurfaceMap.Parse"/>).</summary>
     public static class StarterSurface
     {
@@ -155,16 +158,16 @@ namespace Bunker.Sim
             "TTTTTTTTTTTTTTTTTTTTTTTT~~TTTT",
             "T\"\"\",\"\"i,\"iBBBBBBBB\",r,,~~,T,T",
             "T\"\",T,Xi,riBBBBBBBB\"r,i,~~,T\"T",
-            "T,iV,,\",\"T,BBBHBBBB,\",\",~~,iiT",
-            "Tiii,\"\"iiiX========,,,,,~~,C\"T",
-            "T\",\"\"\",\",,r========C\"i,,~~,i,T",
-            "TT\"ii\"r,,,,,......r,,,,,~~,\",T",
-            "T,\",,,,,,,,,......,,,,,~~,\"r\"T",
-            "T,,i,,,ii,,\"......,\",i,~~,\"\"\"T",
-            "Tii,TT,CC,\",,,,,,,,,\",,~~,,TiT",
-            "T\"\"iT\"\"\"\"\",,,\",\"\",,\"CC,~~,XiiT",
-            "T\",T\"\"\"i,i\",,,,,,,,,\"\",~~,,\",T",
-            "T\"\"Ti,,,ii,iTC,\",,T\"\"i,~~,,,,T",
+            "T,iV,,\",\"T,BBBHBBBB\"\"\"\",~~,iiT",
+            "Tiii,\"\"iiiX;;===;;k,,,,,~~,C\"T",
+            "T\",\"\"\",\",\"rk;===;;;C\"i,,~~,i,T",
+            "TT\"ii\"r,,\"\",i\",\"i\"r\"\",\",~~,\",T",
+            "T,\",,,,T\"T\",\",\"\",\",\",,,~~,\"r\"T",
+            "T,,i,,,ii\",\",\"\",\",,\"ii,~~,\"\"\"T",
+            "Tii,TT,CC,\"Ti\"\"i\"\"\"\"\"\",~~,,TiT",
+            "T\"\"iT\"\"\"\"\"\"\",\",\"\"\",\"CC,~~,XiiT",
+            "T\",T\"\"\"i,i\",\"ii\"ii,\"\"\",~~,,\",T",
+            "T\"\"Ti,,,ii,iTC\"\"i,T\"\"i,~~,,,,T",
             "T,,iX\"TTT,,,,,\"ii,\"\",\"T,~~,C\"T",
             "T,,T\",\",CTi\",,,\"\"\",,CTT,~~,\"\"T",
             "T\"rXr,,,\",,,,,,irr,\"\",i,==,,\"T",
@@ -175,7 +178,8 @@ namespace Bunker.Sim
         };
 
         public const string PlayerName = "Pip";
-        public const string TutorialCommandName = "Water 3 East";
+        public const string ClearCommandName = "Clear 3 East";
+        public const string WaterCommandName = "Water 3 East";
 
         public static World Create()
         {
@@ -184,9 +188,18 @@ namespace Bunker.Sim
             world.Stores.Add(Item.Radish, Balance.StartingRadishes);
             world.AddPlayer(PlayerName);
 
-            // Ready for your first bot: waters three crops in a row, starting just west of them facing east.
-            var row = world.Library.Create(TutorialCommandName);
-            row.Routine.SetAll(new[]
+            // Ready for your first farmhand: clears three tiles eastwards, stepping onto each. Looping, it
+            // keeps clearing east until something stops it.
+            world.Library.Create(ClearCommandName).Routine.SetAll(new[]
+            {
+                Command.Face(Facing.East),
+                Command.Clear, Command.Step(Facing.East),
+                Command.Clear, Command.Step(Facing.East),
+                Command.Clear, Command.Step(Facing.East),
+            });
+
+            // For a water bot: waters three crops in a row, starting just west of them facing east.
+            world.Library.Create(WaterCommandName).Routine.SetAll(new[]
             {
                 Command.Water, Command.Step(Facing.East),
                 Command.Water, Command.Step(Facing.East),

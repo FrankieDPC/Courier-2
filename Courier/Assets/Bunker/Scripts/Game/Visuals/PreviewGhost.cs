@@ -69,7 +69,20 @@ namespace Bunker.Game
             var rotFrom = Quaternion.Euler(0f, from.Facing.ToYawDegrees(), 0f);
             var rotTo = Quaternion.Euler(0f, to.Facing.ToYawDegrees(), 0f);
             var rot = Quaternion.Slerp(rotFrom, rotTo, s);
-            var pos = Vector3.Lerp(SurfaceView.CellToWorld(from.Position), SurfaceView.CellToWorld(to.Position), s);
+
+            // Bots take several ticks per tile and are on the next tile from the first of them: find when
+            // this crossing began and glide steadily over the whole of it.
+            int perTile = Mathf.Max(1, World.TicksPerTile(c));
+            int began = k + 1;
+            for (int back = 0; back < perTile; back++)
+            {
+                if (!result.TryGetFrame(c.Id, began - 1, out var earlier) || began - 1 < result.StartTick || earlier.Position != to.Position) break;
+                began--;
+            }
+            result.TryGetFrame(c.Id, began - 1, out var origin);
+            var startCell = began - 1 >= result.StartTick ? origin.Position : to.Position;
+            float along = Mathf.Clamp01((t - (began - 1)) / perTile);
+            var pos = Vector3.Lerp(SurfaceView.CellToWorld(startCell), SurfaceView.CellToWorld(to.Position), along);
             if (frac > 0f && to.Result == CommandResult.Blocked && to.Path.Length > 0) pos += rot * Vector3.forward * (0.25f * Mathf.Sin(frac * Mathf.PI));
 
             _model.localPosition = pos + Vector3.up * (Lift + 0.03f * Mathf.Sin(Time.time * 3f));

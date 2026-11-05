@@ -15,7 +15,7 @@ namespace Bunker.Game
         const float Distance = 30f; // keep inside URP's default 50m shadow distance
         const float MinSize = 3f;
         const float MaxSize = 14f;
-        const float Follow = 6f;    // how quickly the camera catches up (per second)
+        const float Follow = 8f;    // how quickly the camera catches up (per second)
         const float ReturnRate = 1.5f;
 
         GameController _game;
@@ -62,8 +62,8 @@ namespace Bunker.Game
             var w = _game.World;
             var p = w.Player;
             if (p == null) return SurfaceView.CellToWorld(w.Map.Home);
-            float s = Mathf.SmoothStep(0f, 1f, _game.TickProgress);
-            return Vector3.Lerp(SurfaceView.CellToWorld(p.PreviousPosition), SurfaceView.CellToWorld(p.Position), s);
+            if (_game.Player != null) return _game.Player.WorldPosition; // you move freely, between tiles
+            return SurfaceView.CellToWorld(p.Position);
         }
 
         void LateUpdate()
@@ -102,7 +102,7 @@ namespace Bunker.Game
                 _lastPlayerCell = p.Position;
                 if (!_panning && walking) _lookOffset = Vector3.Lerp(_lookOffset, Vector3.zero, 0.35f);
             }
-            if (!_panning && walking && p.Position != p.PreviousPosition)
+            if (!_panning && walking && _game.Player != null && _game.Player.IsWalking)
                 _lookOffset = Vector3.MoveTowards(_lookOffset, Vector3.zero, _lookOffset.magnitude * ReturnRate * Time.unscaledDeltaTime);
 
             // Keep you in the middle of the open map, not under the side panels or the top bar.

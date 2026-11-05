@@ -32,14 +32,14 @@ namespace Bunker.Sim
             switch (i)
             {
                 case Item.Water: return 1;
-                case Item.Radish: return 1;
-                case Item.Potato: return 2;
-                case Item.Squash: return 3;
+                case Item.Radish:
+                case Item.Potato:
+                case Item.Squash: return Crops.ForProduce(i).Weight;
                 case Item.Fibre: return 1;
                 case Item.Wood: return 2;
                 case Item.Scrap: return 2;
                 case Item.Circuit: return 1;
-                default: return 0; // seeds weigh next to nothing
+                default: return 0; // seeds: they go in a pouch of their own and never take up room
             }
         }
 
@@ -173,7 +173,10 @@ namespace Bunker.Sim
             return list;
         }
 
-        /// <summary>The item there's most weight of (or the most of, for weightless items).</summary>
+        /// <summary>
+        /// What most of the bag is (by weight; by count for weightless crops). Seeds don't count: they ride
+        /// in a pouch of their own and take up no room. None if there's nothing but seeds.
+        /// </summary>
         public Item Main
         {
             get
@@ -182,7 +185,7 @@ namespace Bunker.Sim
                 int bestScore = 0;
                 foreach (var kv in _counts)
                 {
-                    if (kv.Value <= 0) continue;
+                    if (kv.Value <= 0 || ItemInfo.IsSeed(kv.Key)) continue;
                     int score = kv.Value * Math.Max(1, ItemInfo.Weight(kv.Key));
                     if (score > bestScore || (score == bestScore && kv.Key < best)) // ties: earlier item, so it's deterministic
                     {
@@ -208,41 +211,113 @@ namespace Bunker.Sim
             return copy;
         }
 
-        public override string ToString()
+        public override string ToString() => Describe(_ => true);
+
+        /// <summary>Seeds carried: they weigh nothing and ride in their own pouch, not the bag.</summary>
+        public bool HasSeeds
         {
-            var list = ToList();
-            if (list.Count == 0) return "nothing";
-            var sb = new StringBuilder();
-            for (int i = 0; i < list.Count; i++)
+            get
             {
-                if (i > 0) sb.Append(", ");
-                sb.Append(list[i]);
+                foreach (var kv in _counts)
+                    if (kv.Value > 0 && ItemInfo.IsSeed(kv.Key)) return true;
+                return false;
             }
-            return sb.ToString();
+        }
+
+        /// <summary>Anything in the bag proper (everything but seeds).</summary>
+        public bool HasBagItems
+        {
+            get
+            {
+                foreach (var kv in _counts)
+                    if (kv.Value > 0 && !ItemInfo.IsSeed(kv.Key)) return true;
+                return false;
+            }
+        }
+
+        /// <summary>The bag's contents, seeds left out: "5 water, 2 scrap" (or "nothing").</summary>
+        public string BagText() => Describe(i => !ItemInfo.IsSeed(i));
+
+        /// <summary>The seed pouch: "9 radish, 2 potato" (or "none").</summary>
+        public string SeedText()
+        {
+            var sb = new StringBuilder();
+            foreach (var a in ToList())
+            {
+                var crop = Crops.ForSeed(a.Item);
+                if (crop == null) continue;
+                if (sb.Length > 0) sb.Append(", ");
+                sb.Append(a.Amount).Append(' ').Append(crop.Name.ToLowerInvariant());
+            }
+            return sb.Length == 0 ? "none" : sb.ToString();
+        }
+
+        string Describe(Func<Item, bool> include)
+        {
+            var sb = new StringBuilder();
+            foreach (var a in ToList())
+            {
+                if (!include(a.Item)) continue;
+                if (sb.Length > 0) sb.Append(", ");
+                sb.Append(a);
+            }
+            return sb.Length == 0 ? "nothing" : sb.ToString();
         }
     }
 
-    /// <summary>A kind of crop. Instances live in <see cref="Crops"/>.</summary>
+    /// <summary>
+    /// A kind of crop. Instances live in <see cref="Crops"/>. Its stats can be tuned (the game sets them
+    /// from the BunkerData asset); name, seed and produce are fixed.
+    /// </summary>
     public sealed class CropType
     {
         public string Name { get; }
         public Item Seed { get; }
         public Item Produce { get; }
 
-        /// <summary>Watered days needed before it can be harvested.</summary>
-        public int DaysToGrow { get; }
+        /// <summary>In-game hours of being watered it needs before it can be harvested.</summary>
+        public int GrowHours { get; private set; }
+
+        /// <summary>Watered ticks it needs before it can be harvested.</summary>
+        public int GrowTicks => GrowHours * Balance.TicksPerHour;
 
         /// <summary>How much of a ration one harvested crop covers.</summary>
-        public int Food { get; }
+        public int Food { get; private set; }
 
-        public CropType(string name, Item seed, Item produce, int daysToGrow, int food)
+        /// <summary>Carry weight of one harvested crop.</summary>
+        public int Weight { get; private set; }
+
+        /// <summary>Seeds you get from saving one stored crop in the workshop.</summary>
+        public int SeedsSaved { get; private set; }
+
+        readonly int _hours, _food, _weight, _seeds;
+
+        public CropType(string name, Item seed, Item produce, int growHours, int food, int weight, int seedsSaved)
         {
             Name = name;
             Seed = seed;
             Produce = produce;
-            DaysToGrow = daysToGrow;
-            Food = food;
+            _hours = growHours;
+            _food = food;
+            _weight = weight;
+            _seeds = seedsSaved;
+            ResetDefaults();
         }
+
+        public int DefaultGrowHours => _hours;
+        public int DefaultFood => _food;
+        public int DefaultWeight => _weight;
+        public int DefaultSeedsSaved => _seeds;
+
+        public void Configure(int growHours, int food, int weight, int seedsSaved)
+        {
+            GrowHours = Math.Max(1, growHours);
+            Food = Math.Max(0, food);
+            Weight = Math.Max(0, weight);
+            SeedsSaved = Math.Max(1, seedsSaved);
+        }
+
+        public void ResetDefaults() => Configure(_hours, _food, _weight, _seeds);
 
         public override string ToString() => Name;
     }
@@ -250,9 +325,19 @@ namespace Bunker.Sim
     /// <summary>Crops that survived a thousand years in the wild. Wild seeds turn up when you clear overgrowth.</summary>
     public static class Crops
     {
-        public static readonly CropType Radish = new CropType("Radish", Item.RadishSeeds, Item.Radish, daysToGrow: 3, food: 1);
-        public static readonly CropType Potato = new CropType("Potato", Item.PotatoSeeds, Item.Potato, daysToGrow: 5, food: 3);
-        public static readonly CropType Squash = new CropType("Squash", Item.SquashSeeds, Item.Squash, daysToGrow: 8, food: 6);
+        // Grow times are in watered in-game hours (a day is 20 hours, 6 am to 2 am).
+        public static readonly CropType Radish = new CropType("Radish", Item.RadishSeeds, Item.Radish, growHours: 12, food: 1, weight: 1, seedsSaved: 2);
+        public static readonly CropType Potato = new CropType("Potato", Item.PotatoSeeds, Item.Potato, growHours: 30, food: 3, weight: 2, seedsSaved: 2);
+        public static readonly CropType Squash = new CropType("Squash", Item.SquashSeeds, Item.Squash, growHours: 60, food: 6, weight: 3, seedsSaved: 2);
+
+        public const int DefaultWaterLastsHours = 3;
+
+        /// <summary>How long a watering keeps the soil wet, in in-game hours (tunable in the BunkerData asset).</summary>
+        public static int WaterLastsHours { get; private set; } = DefaultWaterLastsHours;
+
+        public static int WaterLastsTicks => WaterLastsHours * Balance.TicksPerHour;
+
+        public static void ConfigureWater(int hours) => WaterLastsHours = Math.Max(1, hours);
 
         public static readonly IReadOnlyList<CropType> All = new[] { Radish, Potato, Squash };
 
@@ -268,6 +353,12 @@ namespace Bunker.Sim
             foreach (var c in All)
                 if (c.Produce == produce) return c;
             return null;
+        }
+
+        public static void ResetDefaults()
+        {
+            foreach (var c in All) c.ResetDefaults();
+            WaterLastsHours = DefaultWaterLastsHours;
         }
     }
 }

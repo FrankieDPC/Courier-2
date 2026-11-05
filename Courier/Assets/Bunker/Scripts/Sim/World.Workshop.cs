@@ -5,8 +5,10 @@ namespace Bunker.Sim
     /// <summary>Things you can make in the bunker workshop from what's in the stores.</summary>
     public enum Recipe
     {
-        WaterBot,
         Farmhand,
+
+        /// <summary>Unlocks once you've built a farmhand.</summary>
+        WaterBot,
 
         /// <summary>Every bot (and you) can carry more.</summary>
         BiggerTanks,
@@ -22,7 +24,7 @@ namespace Bunker.Sim
     {
         public static readonly Recipe[] AllRecipes =
         {
-            Recipe.WaterBot, Recipe.Farmhand, Recipe.BiggerTanks,
+            Recipe.Farmhand, Recipe.WaterBot, Recipe.BiggerTanks,
             Recipe.SaveRadishSeeds, Recipe.SavePotatoSeeds, Recipe.SaveSquashSeeds,
         };
 
@@ -48,16 +50,21 @@ namespace Bunker.Sim
             switch (r)
             {
                 case Recipe.WaterBot:
-                    list.Add(new ItemAmount(Item.Scrap, Balance.WaterBotScrap + extra));
-                    list.Add(new ItemAmount(Item.Circuit, Balance.WaterBotCircuits));
-                    list.Add(new ItemAmount(Item.Fibre, Balance.WaterBotFibre));
-                    break;
                 case Recipe.Farmhand:
-                    list.Add(new ItemAmount(Item.Scrap, Balance.FarmhandScrap + extra));
-                    list.Add(new ItemAmount(Item.Circuit, Balance.FarmhandCircuits));
-                    list.Add(new ItemAmount(Item.Wood, Balance.FarmhandWood));
-                    list.Add(new ItemAmount(Item.Fibre, Balance.FarmhandFibre));
+                {
+                    // The kind's base price, plus extra scrap for every bot already built.
+                    var stats = BotKinds.Stats(r == Recipe.WaterBot ? BotKind.WaterBot : BotKind.Farmhand);
+                    bool hasScrap = false;
+                    foreach (var a in stats.Cost)
+                    {
+                        if (a.Amount <= 0) continue;
+                        bool scrap = a.Item == Item.Scrap;
+                        hasScrap |= scrap;
+                        list.Add(new ItemAmount(a.Item, a.Amount + (scrap ? extra : 0)));
+                    }
+                    if (!hasScrap && extra > 0) list.Insert(0, new ItemAmount(Item.Scrap, extra));
                     break;
+                }
                 case Recipe.BiggerTanks:
                     list.Add(new ItemAmount(Item.Scrap, Balance.TankScrap * (CapacityLevel + 1)));
                     list.Add(new ItemAmount(Item.Wood, Balance.TankWood * (CapacityLevel + 1)));
@@ -70,9 +77,26 @@ namespace Bunker.Sim
             return list;
         }
 
+        /// <summary>Why a recipe can't be made yet regardless of cost, or null if it's unlocked.</summary>
+        public string LockedReason(Recipe r)
+        {
+            if (r == Recipe.WaterBot && !HasBot(BotKind.Farmhand)) return "Build a farmhand first";
+            return null;
+        }
+
+        public bool IsUnlocked(Recipe r) => LockedReason(r) == null;
+
+        bool HasBot(BotKind kind)
+        {
+            foreach (var b in _bots)
+                if (b.Kind == kind) return true;
+            return false;
+        }
+
+        /// <summary>Unlocked, and the stores can pay for it.</summary>
         public bool CanAfford(Recipe r)
         {
-            if (IsGameOver) return false;
+            if (IsGameOver || !IsUnlocked(r)) return false;
             foreach (var a in CostOf(r))
                 if (Stores.Get(a.Item) < a.Amount) return false;
             return true;
@@ -103,11 +127,11 @@ namespace Bunker.Sim
                 }
                 case Recipe.BiggerTanks:
                     CapacityLevel++;
-                    foreach (var b in _bots) b.Capacity += Balance.CapacityUpgrade;
+                    RefreshStats();
                     break;
                 default:
                     var crop = CropFor(r);
-                    if (crop != null) Stores.Add(crop.Seed, Balance.SeedsSaved);
+                    if (crop != null) Stores.Add(crop.Seed, crop.SeedsSaved);
                     break;
             }
             Built?.Invoke(r);

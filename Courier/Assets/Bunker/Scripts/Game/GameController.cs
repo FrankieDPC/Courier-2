@@ -66,6 +66,12 @@ namespace Bunker.Game
         /// <summary>Your robot's controls (set up by GameBootstrap).</summary>
         public PlayerController Player { get; set; }
 
+        /// <summary>Bot and crop stats in use (the BunkerData asset).</summary>
+        public BunkerData Data { get; set; }
+
+        /// <summary>The data asset was edited while playing (stats already applied to the sim).</summary>
+        public event Action DataChanged;
+
         /// <summary>Waiting for the player to click a tile for a "Go to" command.</summary>
         public bool IsPicking => _onPick != null;
 
@@ -79,6 +85,7 @@ namespace Bunker.Game
         float _accumulator;
         float _nightTimer;
         float _fadeInTimer;
+        bool _dataDirty;
         bool _userPaused;
         bool _warnedLate;
         CommandResult _lastToastResult;
@@ -100,6 +107,25 @@ namespace Bunker.Game
             World.BotAdded += Watch;
             World.Library.MacroEdited += OnMacroEdited;
             foreach (var b in World.Bots) Watch(b);
+            BunkerData.Edited += OnDataEdited;
+        }
+
+        /// <summary>An asset was edited while playing: if it's ours, re-apply it next frame.</summary>
+        void OnDataEdited(BunkerData edited)
+        {
+            if (edited != null && edited == Data) _dataDirty = true;
+        }
+
+        /// <summary>Live tuning: stats, carry capacities, routes and the preview follow the edited asset.</summary>
+        void ApplyDataEdits()
+        {
+            _dataDirty = false;
+            if (World == null || Data == null) return;
+            Data.Apply();
+            World.RefreshStats();
+            if (Preview != null) Preview.MarkDirty();
+            DataChanged?.Invoke();
+            StateChanged?.Invoke();
         }
 
         void OnDestroy()
@@ -112,11 +138,13 @@ namespace Bunker.Game
             World.BotAdded -= Watch;
             World.Library.MacroEdited -= OnMacroEdited;
             foreach (var b in _watched) b.Routine.Changed -= MarkEditedFor(b);
+            BunkerData.Edited -= OnDataEdited;
         }
 
         void Update()
         {
             if (World == null) return;
+            if (_dataDirty) ApplyDataEdits();
 
             if (_fadeInTimer > 0f)
             {
@@ -145,12 +173,11 @@ namespace Bunker.Game
             {
                 if (World.Tick >= World.TicksPerDay - 1)
                 {
-                    // The next tick ends the day: fade to black first, then run it.
-                    _accumulator = 0f;
+                    // The next tick ends the day: fade to black first (everything holds still), then run it.
                     _fadeInTimer = FadeInSeconds;
                     CancelPick();
                     StateChanged?.Invoke();
-                    break;
+                    return;
                 }
                 _accumulator -= SecondsPerTick;
                 // Your input is read fresh for every tick, so fast speeds don't drop or repeat moves.
@@ -208,7 +235,8 @@ namespace Bunker.Game
             if (!World.IsGameOver) _nightTimer = NightSeconds;
 
             string delivered = r.Delivered.IsEmpty ? "nothing delivered" : $"delivered {r.Delivered}";
-            string dry = r.CropsDry > 0 ? $", {r.CropsDry} crop(s) went thirsty" : "";
+            string ripened = r.CropsRipened > 0 ? $", {r.CropsRipened} crop(s) ripened" : "";
+            string dry = r.CropsDry > 0 ? $", {r.CropsDry} crop(s) left in dry soil" : "";
             string ration = "";
             if (r.RationNight)
             {
@@ -216,7 +244,7 @@ namespace Bunker.Game
                     ? $" RATION SHORT: the bunker needed {r.RationNeeded} food and got {r.RationEaten}. Strike {r.Strikes} of {World.MaxStrikes}."
                     : $" The bunker ate its ration ({r.RationNeeded} food).";
             }
-            ShowToast($"Day {r.Day}: {delivered}{dry}.{ration}");
+            ShowToast($"Day {r.Day}: {delivered}{ripened}{dry}.{ration}");
             StateChanged?.Invoke();
         }
 
@@ -238,15 +266,23 @@ namespace Bunker.Game
         /// <summary>When your own job fails, say why and what to do about it.</summary>
         void OnPlayerActed(Command c, CommandResult r)
         {
+            if (c.Type == CommandType.Dump && r == CommandResult.Ok)
+            {
+                ShowToast("You pour your water out on the ground");
+                return;
+            }
             if (!CommandInfo.IsProblem(r)) return;
             if (r == _lastToastResult && Time.unscaledTime - _lastToastTime < 2f) return; // don't nag on repeat presses
             _lastToastResult = r;
             _lastToastTime = Time.unscaledTime;
-            ShowToast(Hint(r));
+            ShowToast(Hint(c, r, World.Player != null && World.Player.Load.Get(Item.Water) > 0));
         }
 
-        static string Hint(CommandResult r)
+        static string Hint(Command c, CommandResult r, bool carryingWater)
         {
+            if (r == CommandResult.LoadFull && carryingWater) return "Too heavy: press X to dump your water, or face the hatch and press E to deliver";
+            if (r == CommandResult.AlreadyDone && c.Type == CommandType.Water) return "Still wet: water again once the soil dries to damp";
+            if (r == CommandResult.AlreadyDone && c.Type == CommandType.Grab) return "Your tank's already full";
             switch (r)
             {
                 case CommandResult.NoWater: return "Out of water: face the stream and press E to fill up";
@@ -257,6 +293,7 @@ namespace Bunker.Game
                 case CommandResult.AlreadyDone: return "Already done";
                 case CommandResult.NothingToClear: return "Nothing to do there";
                 case CommandResult.NotSoil: return "Nothing grows on concrete";
+                case CommandResult.NothingToDump: return "You're not carrying any water";
                 default: return CommandInfo.Describe(r);
             }
         }
@@ -371,14 +408,17 @@ namespace Bunker.Game
             HoveredCell = cell;
         }
 
-        /// <summary>A bot standing on <paramref name="cell"/> (cycling through several), never you.</summary>
+        /// <summary>Where a bot is drawn (set by the SurfaceView). Bots walking slowly are a tile ahead in the sim.</summary>
+        public Func<Bot, Cell> DrawnCell { get; set; }
+
+        /// <summary>A bot drawn on <paramref name="cell"/> (cycling through several), never you.</summary>
         public Bot BotAt(Cell cell)
         {
             Bot first = null;
             bool passedSelected = false;
             foreach (var b in World.Bots)
             {
-                if (b.IsPlayer || b.Position != cell) continue;
+                if (b.IsPlayer || (DrawnCell != null ? DrawnCell(b) : b.Position) != cell) continue;
                 if (first == null) first = b;
                 if (passedSelected) return b;
                 if (b == SelectedBot) passedSelected = true;
@@ -450,7 +490,10 @@ namespace Bunker.Game
             if (InNight) return;
             if (!World.TryBuild(r, out var bot))
             {
-                ShowToast(World.IsGameOver ? "It's all over - press Play again" : $"Not enough in the stores: needs {CostText(World, r)}");
+                string locked = World.LockedReason(r);
+                ShowToast(World.IsGameOver ? "It's all over - press Play again"
+                    : locked != null ? locked
+                    : $"Not enough in the stores: needs {CostText(World, r)}");
                 return;
             }
             if (bot != null)
@@ -463,7 +506,7 @@ namespace Bunker.Game
             else
             {
                 var crop = World.CropFor(r);
-                ShowToast($"Saved {Balance.SeedsSaved} {crop.Name.ToLowerInvariant()} seeds from one {crop.Name.ToLowerInvariant()}");
+                ShowToast($"Saved {crop.SeedsSaved} {crop.Name.ToLowerInvariant()} seeds from one {crop.Name.ToLowerInvariant()}");
             }
             StateChanged?.Invoke();
         }

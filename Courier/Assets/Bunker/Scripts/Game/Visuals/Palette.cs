@@ -19,6 +19,7 @@ namespace Bunker.Game
         public static readonly Color Water = Hex("#3E86B4");
         public static readonly Color WaterDeep = Hex("#2F6E99");
         public static readonly Color Tilled = Hex("#5A3A22");
+        public static readonly Color TilledDamp = Hex("#4A2F1C");
         public static readonly Color TilledWet = Hex("#3A2416");
 
         // Overgrowth
@@ -116,6 +117,7 @@ namespace Bunker.Game
                 case CommandType.Harvest: return Hex("#D08A2E");
                 case CommandType.Grab: return Hex("#0EA5E9");
                 case CommandType.Deliver: return Hex("#B5432F");
+                case CommandType.Dump: return Hex("#5A7FA8");
                 case CommandType.Run: return Macro(c.MacroId);
                 default: return Hex("#8A8F98");
             }

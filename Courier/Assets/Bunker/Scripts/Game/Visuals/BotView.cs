@@ -6,7 +6,8 @@ namespace Bunker.Game
     /// <summary>
     /// Placeholder robot: you have an antenna with a lamp; farmhands wear straw hats; water bots wear a water tank. Each has a stack of crates on its back
     /// showing how full its load is (coloured by what it's mostly carrying). Bobs while it works and
-    /// shows "!" when its last command had a problem. Interpolates between ticks.
+    /// shows "!" when its last command had a problem. Bots glide at a steady speed across each tile (a
+    /// tile takes several ticks); you are drawn wherever the PlayerController has you, turning smoothly.
     /// </summary>
     public sealed class BotView : MonoBehaviour
     {
@@ -22,8 +23,14 @@ namespace Bunker.Game
         Vector3 _from, _to;
         Quaternion _fromRot, _toRot;
         bool _bump;
+        int _moveTicks = 1;   // ticks the current tile crossing lasts
+        int _moveElapsed;     // ticks of it already done
+        Cell _lastCell;
 
         public Vector3 Offset { get; set; }
+
+        /// <summary>The tile this bot is drawn on right now (it can be a tile behind the sim while walking).</summary>
+        public Cell DrawnCell => new Cell(Mathf.RoundToInt(transform.localPosition.x), Mathf.RoundToInt(transform.localPosition.z));
 
         public void Init(Bot b, GameController game)
         {
@@ -86,20 +93,54 @@ namespace Bunker.Game
             _from = _to = WorldPos(_bot.Position);
             _fromRot = _toRot = Rot(_bot.Facing);
             _bump = false;
+            _moveTicks = 1;
+            _moveElapsed = 0;
+            _lastCell = _bot.Position;
             RefreshDecor();
-            Apply(1f);
+            if (_bot.IsPlayer) ApplyPlayer(snap: true);
+            else Apply(1f);
         }
 
         public void OnTick()
         {
+            RefreshDecor();
+            if (_bot.IsPlayer) return; // drawn from the PlayerController every frame
+
             // Glide on from where the bot is drawn now (not its last tile + today's fan-out offset), so
             // leaving a shared tile or several ticks in one frame never makes it jump.
-            _from = transform.localPosition;
-            _to = WorldPos(_bot.Position);
             _fromRot = transform.localRotation;
             _toRot = Rot(_bot.Facing);
             _bump = _bot.LastResult == CommandResult.Blocked;
-            RefreshDecor();
+            if (_bot.Position != _lastCell)
+            {
+                // Started crossing a new tile: glide there over the bot's ticks-per-tile.
+                _lastCell = _bot.Position;
+                _from = transform.localPosition;
+                _to = WorldPos(_bot.Position);
+                _moveTicks = Mathf.Max(1, World.TicksPerTile(_bot));
+                _moveElapsed = 0;
+            }
+            else
+            {
+                _moveElapsed++;
+                var to = WorldPos(_bot.Position);
+                if (_moveElapsed >= _moveTicks)
+                {
+                    // Crossing done: settle the last little bit over the next tick.
+                    _from = transform.localPosition;
+                    _to = to;
+                    _moveTicks = 1;
+                    _moveElapsed = 0;
+                }
+                else if (to != _to)
+                {
+                    // The fan-out offset changed mid-crossing: carry on from here to the new spot, same pace.
+                    _from = transform.localPosition;
+                    _to = to;
+                    _moveTicks -= _moveElapsed;
+                    _moveElapsed = 0;
+                }
+            }
         }
 
         void RefreshDecor()
@@ -114,7 +155,7 @@ namespace Bunker.Game
         public static void ShowLoad(GameObject[] blocks, int weight, int capacity, Item main)
         {
             int shown = weight <= 0 ? 0 : Mathf.Clamp(Mathf.CeilToInt(blocks.Length * weight / (float)Mathf.Max(1, capacity)), 1, blocks.Length);
-            if (weight == 0 && main != Item.None) shown = 1; // weightless seeds still show one crate
+            if (weight == 0 && main != Item.None) shown = 1; // a crop tuned to weigh nothing still shows a crate (seeds never do)
             var color = Palette.For(main);
             for (int i = 0; i < blocks.Length; i++)
             {
@@ -127,20 +168,42 @@ namespace Bunker.Game
         void Update()
         {
             _selection.SetActive(_game.SelectedBot == _bot);
-            Apply(_game.TickProgress);
             bool working = _bot.LastResult == CommandResult.Working && !_game.Paused;
             float bob = working ? 0.05f * Mathf.Abs(Mathf.Sin(Time.time * 14f)) : 0f;
+
+            if (_bot.IsPlayer)
+            {
+                ApplyPlayer(snap: false);
+                var pc = _game.Player;
+                if (!working && pc != null && pc.IsWalking) bob = 0.03f * Mathf.Abs(Mathf.Sin(Time.time * 16f)); // a little trot
+            }
+            else
+            {
+                Apply(_game.TickProgress);
+                if (!working && _bot.LastResult == CommandResult.Moving && !_game.Paused)
+                    bob = 0.025f * Mathf.Abs(Mathf.Sin(Time.time * 9f)); // a slow plod
+            }
             _body.localPosition = new Vector3(0f, bob, 0f);
         }
 
-        void Apply(float t)
+        /// <summary>Bots: a steady glide across the tile (linear, so walking several tiles has no hitches).</summary>
+        void Apply(float tickProgress)
         {
-            float s = Mathf.SmoothStep(0f, 1f, t);
-            var pos = Vector3.Lerp(_from, _to, s);
-            var rot = Quaternion.Slerp(_fromRot, _toRot, s);
-            if (_bump) pos += rot * Vector3.forward * (0.25f * Mathf.Sin(t * Mathf.PI));
+            float t = Mathf.Clamp01((_moveElapsed + tickProgress) / _moveTicks);
+            var pos = Vector3.Lerp(_from, _to, t);
+            var rot = Quaternion.Slerp(_fromRot, _toRot, Mathf.SmoothStep(0f, 1f, tickProgress));
+            if (_bump) pos += rot * Vector3.forward * (0.25f * Mathf.Sin(tickProgress * Mathf.PI));
             transform.localPosition = pos;
             transform.localRotation = rot;
+        }
+
+        /// <summary>You: wherever the PlayerController has you, turning quickly (turning never stops you).</summary>
+        void ApplyPlayer(bool snap)
+        {
+            var pc = _game.Player;
+            transform.localPosition = pc != null ? pc.WorldPosition : SurfaceView.CellToWorld(_bot.Position);
+            var target = Rot(pc != null ? pc.Facing : _bot.Facing);
+            transform.localRotation = snap ? target : Quaternion.RotateTowards(transform.localRotation, target, 900f * Time.deltaTime);
         }
     }
 }

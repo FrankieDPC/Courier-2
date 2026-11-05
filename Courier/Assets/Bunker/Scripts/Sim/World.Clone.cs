@@ -24,6 +24,7 @@ namespace Bunker.Sim
                 BotsBuilt = BotsBuilt,
                 Outcome = Outcome,
                 _tilesClearedToday = _tilesClearedToday,
+                _ripenedToday = _ripenedToday,
             };
 
             w.Library.CopyFrom(Library);

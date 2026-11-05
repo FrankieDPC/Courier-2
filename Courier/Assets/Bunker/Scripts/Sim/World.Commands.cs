@@ -49,7 +49,7 @@ namespace Bunker.Sim
             switch (cmd.Type)
             {
                 case CommandType.GoTo: return GoTo(b, cmd, out finished);
-                case CommandType.Step: return StepBot(b, cmd.Dir);
+                case CommandType.Step: return StepBot(b, cmd.Dir, out finished);
                 case CommandType.Face:
                     b.Facing = cmd.Dir;
                     return CommandResult.Ok;
@@ -61,6 +61,7 @@ namespace Bunker.Sim
                 case CommandType.Harvest:
                 case CommandType.Grab:
                 case CommandType.Deliver:
+                case CommandType.Dump:
                     return Timed(b, cmd, out finished);
                 default: return CommandResult.None;
             }
@@ -80,6 +81,7 @@ namespace Bunker.Sim
                 case CommandType.Harvest: return CheckHarvest(b);
                 case CommandType.Grab: return CheckGrab(b, cmd);
                 case CommandType.Deliver: return CheckDeliver(b);
+                case CommandType.Dump: return CheckDump(b);
                 default: return CommandResult.None;
             }
         }
@@ -95,6 +97,7 @@ namespace Bunker.Sim
                 case CommandType.Harvest: DoHarvest(b); break;
                 case CommandType.Grab: DoGrab(b, cmd); break;
                 case CommandType.Deliver: DoDeliver(b); break;
+                case CommandType.Dump: DoDump(b); break;
             }
         }
 
@@ -160,13 +163,36 @@ namespace Bunker.Sim
 
         // ------------------------------------------------------------------ movement
 
-        CommandResult StepBot(Bot b, Facing dir)
+        /// <summary>Ticks this bot takes to walk one tile (see <see cref="BotStats.TicksPerTile"/>).</summary>
+        public static int TicksPerTile(Bot b) => BotKinds.Stats(b.Kind).TicksPerTile;
+
+        // Walking a tile: the bot moves onto it on the first tick (so it can be drawn gliding across),
+        // then spends the rest of its ticks-per-tile getting there (WorkLeft counts them down).
+
+        CommandResult StepBot(Bot b, Facing dir, out bool finished)
         {
+            finished = true;
+            if (b.WorkLeft > 0)
+            {
+                b.WorkLeft--;
+                finished = b.WorkLeft == 0;
+                return finished ? CommandResult.Ok : CommandResult.Moving;
+            }
             b.Facing = dir;
             var next = b.Position.Step(dir);
             if (!Map.IsWalkable(next)) return CommandResult.Blocked;
             b.Position = next;
-            return CommandResult.Ok;
+            return BeginWalk(b, out finished) ? CommandResult.Moving : CommandResult.Ok;
+        }
+
+        /// <summary>Starts the rest of a tile's walk. False if the bot is so quick it's already there.</summary>
+        static bool BeginWalk(Bot b, out bool finished)
+        {
+            int n = TicksPerTile(b);
+            finished = n <= 1;
+            if (finished) return false;
+            b.WorkLeft = n - 1;
+            return true;
         }
 
         CommandResult GoTo(Bot b, Command cmd, out bool finished)
@@ -175,6 +201,16 @@ namespace Bunker.Sim
             var dist = DistanceTo(cmd.Target, cmd.Tile);
             if (!Map.InBounds(b.Position)) return CommandResult.NoPath;
             int d = dist[b.Position.X, b.Position.Y];
+
+            if (b.WorkLeft > 0)
+            {
+                // Still crossing the tile it just stepped onto.
+                b.WorkLeft--;
+                finished = b.WorkLeft == 0 && d == 0;
+                if (finished) FaceTarget(b, cmd.Target);
+                return finished ? CommandResult.Ok : CommandResult.Moving;
+            }
+
             if (d == 0)
             {
                 FaceTarget(b, cmd.Target); // already there
@@ -184,6 +220,11 @@ namespace Bunker.Sim
 
             b.Facing = dir;
             b.Position = next;
+            if (BeginWalk(b, out _))
+            {
+                finished = false;
+                return CommandResult.Moving;
+            }
             finished = d - 1 == 0;
             if (finished) FaceTarget(b, cmd.Target);
             return CommandResult.Ok;
@@ -237,6 +278,7 @@ namespace Bunker.Sim
             Map[cell].Debris = Debris.None;
             _distanceCache.Clear(); // a new tile is walkable
             RaiseTileChanged(cell);
+            GroundChanged?.Invoke(cell);
         }
 
         CommandResult CheckTill(Bot b)
@@ -291,11 +333,15 @@ namespace Bunker.Sim
             RaiseTileChanged(cell);
         }
 
+        /// <summary>
+        /// Waters tilled soil (planted or not). Soil that still has more than half its water is
+        /// "already watered", so looping water bots don't pour away their tank.
+        /// </summary>
         CommandResult CheckWater(Bot b)
         {
             var t = Map.TileAt(Ahead(b));
-            if (t == null || !t.HasCrop) return CommandResult.NothingHere;
-            if (t.Watered) return CommandResult.AlreadyDone;
+            if (t == null || !t.IsFarmland || !t.Tilled) return t != null && t.IsOvergrown ? CommandResult.Overgrown : CommandResult.NotTilled;
+            if (t.WellWatered) return CommandResult.AlreadyDone;
             if (b.Load.Get(Item.Water) <= 0) return CommandResult.NoWater;
             return CommandResult.Ok;
         }
@@ -304,7 +350,7 @@ namespace Bunker.Sim
         {
             var cell = Ahead(b);
             b.Load.Remove(Item.Water, 1);
-            Map[cell].Watered = true;
+            Map[cell].Moisture = Crops.WaterLastsTicks;
             RaiseTileChanged(cell);
         }
 
@@ -334,7 +380,9 @@ namespace Bunker.Sim
             if (cmd.Item == Item.Water)
             {
                 if (!Map.IsWater(ahead)) return CommandResult.NotAtStream;
-                return b.FreeWeight < ItemInfo.Weight(Item.Water) ? CommandResult.LoadFull : CommandResult.Ok;
+                if (b.FreeWeight >= ItemInfo.Weight(Item.Water)) return CommandResult.Ok;
+                // A full tank isn't a mistake (the soil was still wet last time round); full of junk is.
+                return b.Load.Get(Item.Water) > 0 ? CommandResult.AlreadyDone : CommandResult.LoadFull;
             }
             if (!Map.IsHatch(ahead)) return CommandResult.NotAtHatch;
             if (cmd.Item == Item.None)
@@ -386,6 +434,20 @@ namespace Bunker.Sim
                 b.Load.Remove(a.Item, a.Amount);
                 HandIn(b, a.Item, a.Amount);
             }
+        }
+
+        /// <summary>Water (any fluid) can be poured out anywhere, to make room in the load.</summary>
+        static CommandResult CheckDump(Bot b)
+        {
+            foreach (var a in b.Load.ToList())
+                if (ItemInfo.IsFluid(a.Item)) return CommandResult.Ok;
+            return CommandResult.NothingToDump;
+        }
+
+        static void DoDump(Bot b)
+        {
+            foreach (var a in b.Load.ToList())
+                if (ItemInfo.IsFluid(a.Item)) b.Load.Remove(a.Item, a.Amount);
         }
     }
 }

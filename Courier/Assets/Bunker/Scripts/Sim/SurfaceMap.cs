@@ -44,14 +44,45 @@ namespace Bunker.Sim
     /// <summary>One tile of the surface and whatever is on it.</summary>
     public sealed class Tile
     {
+        readonly SurfaceMap _map;
+        int _moisture;
+
+        /// <summary>On the map's list of wet tiles (the ones that dry out each tick).</summary>
+        internal bool OnWetList;
+
+        /// <summary>Where this tile is.</summary>
+        public Cell Cell { get; }
+
+        internal Tile(SurfaceMap map, Cell cell)
+        {
+            _map = map;
+            Cell = cell;
+        }
+
         public Ground Ground { get; internal set; }
         public Structure Structure { get; internal set; }
         public Debris Debris { get; internal set; }
         public bool Tilled { get; internal set; }
-        public bool Watered { get; internal set; }
+
+        /// <summary>Ticks of water left in the soil. Counts down every tick; crops only grow while it's above 0.</summary>
+        public int Moisture
+        {
+            get => _moisture;
+            internal set
+            {
+                _moisture = value;
+                if (value > 0 && !OnWetList) _map?.AddWet(this);
+            }
+        }
+
+        public bool Watered => Moisture > 0;
+
+        /// <summary>Wet enough that watering again would be a waste (more than half the water left).</summary>
+        public bool WellWatered => Moisture > Crops.WaterLastsTicks / 2;
+
         public CropType Crop { get; internal set; }
 
-        /// <summary>Watered days this crop has had.</summary>
+        /// <summary>Watered ticks this crop has grown for.</summary>
         public int Growth { get; internal set; }
 
         public bool IsWalkable => Structure == Structure.None && Debris == Debris.None && Ground != Ground.Water;
@@ -62,7 +93,16 @@ namespace Bunker.Sim
         public bool IsOvergrown => Debris != Debris.None;
         public bool IsWater => Ground == Ground.Water;
         public bool HasCrop => Crop != null;
-        public bool IsRipe => Crop != null && Growth >= Crop.DaysToGrow;
+        public bool IsRipe => Crop != null && Growth >= Crop.GrowTicks;
+
+        /// <summary>0..1 how far the crop has grown.</summary>
+        public float Grown01 => Crop == null ? 0f : Math.Min(1f, Growth / (float)Math.Max(1, Crop.GrowTicks));
+
+        /// <summary>Growth stage for drawing: 0..3 while growing, 4 when ripe, -1 with no crop.</summary>
+        public int Stage => Crop == null ? -1 : IsRipe ? 4 : Math.Min(3, (int)(Grown01 * 4f));
+
+        /// <summary>Soil wetness for drawing: 0 dry, 1 damp (half the water or less left), 2 wet.</summary>
+        public int WetLevel => Moisture <= 0 ? 0 : WellWatered ? 2 : 1;
 
         internal void CopyFrom(Tile o)
         {
@@ -70,7 +110,7 @@ namespace Bunker.Sim
             Structure = o.Structure;
             Debris = o.Debris;
             Tilled = o.Tilled;
-            Watered = o.Watered;
+            Moisture = o.Moisture;
             Crop = o.Crop;
             Growth = o.Growth;
         }
@@ -84,6 +124,18 @@ namespace Bunker.Sim
     public sealed class SurfaceMap
     {
         readonly Tile[,] _tiles;
+
+        /// <summary>
+        /// Tiles that may still be wet (any with Moisture above 0 is on it; dry ones are dropped as the
+        /// soil is updated). Saves sweeping the whole map every tick.
+        /// </summary>
+        internal readonly List<Tile> Wet = new List<Tile>();
+
+        internal void AddWet(Tile t)
+        {
+            t.OnWetList = true;
+            Wet.Add(t);
+        }
 
         public int Width { get; }
         public int Height { get; }
@@ -101,9 +153,9 @@ namespace Bunker.Sim
             Width = width;
             Height = height;
             _tiles = new Tile[width, height];
-            for (int x = 0; x < width; x++)
             for (int y = 0; y < height; y++)
-                _tiles[x, y] = new Tile();
+            for (int x = 0; x < width; x++)
+                _tiles[x, y] = new Tile(this, new Cell(x, y));
         }
 
         public Tile this[Cell c] => _tiles[c.X, c.Y];
@@ -147,6 +199,7 @@ namespace Bunker.Sim
         ///   .  clear soil       =  concrete (old pad, bridge)    ~  stream
         ///   t  tilled soil      p  tilled, with a radish planted
         ///   ,  weeds            "  thicket       i  sapling      T  old tree      r  rubble
+        ///   ;  weeds on concrete                 k  rubble on concrete
         ///   C  car wreck        X  dead terminal                 V  seed cache
         ///   B  bunker wall      H  hatch (you and the bots live on the open tile beside it)
         /// </code>
@@ -179,6 +232,8 @@ namespace Bunker.Sim
                         case 'i': t.Debris = Debris.Sapling; break;
                         case 'T': t.Debris = Debris.Tree; break;
                         case 'r': t.Debris = Debris.Rubble; break;
+                        case ';': t.Ground = Ground.Concrete; t.Debris = Debris.Weeds; break;
+                        case 'k': t.Ground = Ground.Concrete; t.Debris = Debris.Rubble; break;
                         case 'C': t.Debris = Debris.Wreck; break;
                         case 'X': t.Debris = Debris.Terminal; break;
                         case 'V': t.Debris = Debris.SeedCache; break;

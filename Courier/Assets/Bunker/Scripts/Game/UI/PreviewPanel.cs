@@ -9,7 +9,7 @@ namespace Bunker.Game
 {
     /// <summary>
     /// Bottom-centre card shown while previewing: play/pause, a timeline scrubber, and a summary of the
-    /// selected bot's day (tasks done, what sells tonight, thirsty crops, and problems you can click to
+    /// selected bot's day (tasks done, what reaches the stores, crops ripening or in dry soil, and problems you can click to
     /// jump to).
     /// </summary>
     public sealed class PreviewPanel : MonoBehaviour
@@ -160,10 +160,14 @@ namespace Bunker.Game
             var night = result.Night;
             if (night != null)
             {
-                string dry = night.CropsDry > 0 ? UIFactory.Colour($"{night.CropsDry} crop(s) go thirsty", Palette.Warning) : UIFactory.Colour("every crop gets watered", Palette.Good);
                 string delivered = night.Delivered.IsEmpty ? "nothing new reaches the stores" : $"the stores get {night.Delivered}";
-                sb.Append($"\n<b>Tonight</b> {delivered}; {night.CropsWatered} crop(s) grow, {dry}.");
-                if (night.CropsRipe > 0) sb.Append($" {night.CropsRipe} will be ripe tomorrow.");
+                sb.Append($"\n<b>By nightfall</b> {delivered}.");
+                var crops = new List<string>();
+                if (night.CropsRipened > 0) crops.Add(UIFactory.Colour($"{night.CropsRipened} ripen today", Palette.Good));
+                if (night.CropsRipe > 0) crops.Add($"{night.CropsRipe} ripe for picking");
+                if (night.CropsWatered > 0) crops.Add($"{night.CropsWatered} growing in wet soil");
+                if (night.CropsDry > 0) crops.Add(UIFactory.Colour($"{night.CropsDry} stuck in dry soil", Palette.Warning));
+                if (crops.Count > 0) sb.Append(" Crops: ").Append(string.Join(", ", crops)).Append('.');
                 if (night.RationNight)
                     sb.Append(night.RationShort
                         ? " " + UIFactory.Colour($"Ration night: the bunker needs {night.RationNeeded} food and would only get {night.RationEaten}!", Palette.Error)

@@ -29,6 +29,9 @@ namespace Bunker.Sim
 
         /// <summary>Hand food and materials in at the hatch.</summary>
         Deliver,
+
+        /// <summary>Pour all the water out of the load, anywhere, to make room.</summary>
+        Dump,
         Wait,
 
         /// <summary>Run a custom command (from the command library), then carry on.</summary>
@@ -52,12 +55,16 @@ namespace Bunker.Sim
         /// <summary>Partway through a job that takes several ticks.</summary>
         Working,
 
+        /// <summary>Walking: partway across a tile (bots take several ticks per tile).</summary>
+        Moving,
+
         // Soft results: nothing wrong with the routine, there just wasn't anything to do.
         AlreadyDone,
         NotRipe,
         NothingHere,
         NothingToClear,
         NothingToDeliver,
+        NothingToDump,
         OutOfStock,
 
         // Hard results: the routine is probably wrong.
@@ -162,6 +169,7 @@ namespace Bunker.Sim
         public static Command Harvest => new Command { Type = CommandType.Harvest };
         public static Command Grab(Item item, int count) => new Command { Type = CommandType.Grab, Item = item, Count = count };
         public static Command Deliver => new Command { Type = CommandType.Deliver };
+        public static Command Dump => new Command { Type = CommandType.Dump };
         public static Command Wait => new Command { Type = CommandType.Wait };
         public static Command Run(Macro macro) => new Command { Type = CommandType.Run, MacroId = macro.Id };
         public static Command Run(int macroId) => new Command { Type = CommandType.Run, MacroId = macroId };
@@ -212,7 +220,7 @@ namespace Bunker.Sim
             CommandType.Till, CommandType.Plant,
             CommandType.Water, CommandType.Harvest,
             CommandType.Grab, CommandType.Deliver,
-            CommandType.Wait,
+            CommandType.Dump, CommandType.Wait,
         };
 
         /// <summary>Ticks a job takes. Go to is one tick per tile walked; Clear depends on the debris (see <see cref="Balance.ClearTicks"/>).</summary>
@@ -226,6 +234,7 @@ namespace Bunker.Sim
                 case CommandType.Harvest: return Balance.HarvestTicks;
                 case CommandType.Grab: return Balance.GrabTicks;
                 case CommandType.Deliver: return Balance.DeliverTicks;
+                case CommandType.Dump: return Balance.DumpTicks;
                 case CommandType.Run: return 0;
                 default: return 1;
             }
@@ -245,6 +254,7 @@ namespace Bunker.Sim
                 case CommandType.Harvest: return "Harvest";
                 case CommandType.Grab: return "Grab";
                 case CommandType.Deliver: return "Deliver";
+                case CommandType.Dump: return "Dump water";
                 case CommandType.Wait: return "Wait";
                 case CommandType.Run: return "Run";
                 default: return t.ToString();
@@ -296,11 +306,13 @@ namespace Bunker.Sim
                 case CommandResult.Ok: return "OK";
                 case CommandResult.Idle: return "Idle";
                 case CommandResult.Working: return "Working...";
+                case CommandResult.Moving: return "Walking...";
                 case CommandResult.AlreadyDone: return "Already done";
                 case CommandResult.NotRipe: return "Not ripe yet";
                 case CommandResult.NothingHere: return "Nothing growing there";
                 case CommandResult.NothingToClear: return "Nothing to clear there";
                 case CommandResult.NothingToDeliver: return "Nothing to deliver";
+                case CommandResult.NothingToDump: return "No water to dump";
                 case CommandResult.OutOfStock: return "The bunker is out of those seeds";
                 case CommandResult.Blocked: return "Blocked";
                 case CommandResult.NoPath: return "Can't get there";

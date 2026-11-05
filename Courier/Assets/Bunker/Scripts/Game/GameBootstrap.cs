@@ -17,6 +17,9 @@ namespace Bunker.Game
         [Tooltip("Real seconds per simulation tick at 1x speed.")]
         [SerializeField] float secondsPerTick = 0.25f;
 
+        [Tooltip("Bot and crop stats. Leave empty to use Assets/Bunker/Resources/BunkerData.asset (Bunker > Edit Game Data).")]
+        [SerializeField] BunkerData data = null;
+
         GameController _game;
         GameObject _view;
         GameObject _ui;
@@ -35,9 +38,15 @@ namespace Bunker.Game
 
         void Build()
         {
+            // Stats first: bots and crops are created from them.
+            var gameData = data != null ? data : BunkerData.LoadOrDefault();
+            GameRules.ResetToDefaults();
+            gameData.Apply();
+
             var world = StarterSurface.Create();
 
             _game = gameObject.AddComponent<GameController>();
+            _game.Data = gameData;
             _game.Init(world, secondsPerTick);
             _game.RestartRequested += OnRestartRequested;
 
@@ -66,7 +75,7 @@ namespace Bunker.Game
             _dayLight = gameObject.AddComponent<DayLight>();
             _dayLight.Init(_game, SetupLighting(), cam);
 
-            _game.ShowToast("Morning, Pip. WASD to move, E to work the tile in front of you. The day runs 6 am to 2 am.");
+            _game.ShowToast("Morning, Pip. WASD to move, E to work the tile in front of you. Salvage the old tech by the hatch to build your first bot, a farmhand.");
         }
 
         void OnRestartRequested() => StartCoroutine(Rebuild());

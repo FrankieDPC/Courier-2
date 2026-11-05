@@ -71,6 +71,13 @@ namespace Bunker.Game
             World.DayEnded += OnDayEnded;
             World.TileChanged += RefreshTile;
             World.Salvaged += OnSalvaged;
+            _game.DataChanged += RefreshAllTiles;
+            _game.DrawnCell = b => _botViews.TryGetValue(b, out var v) ? v.DrawnCell : b.Position;
+        }
+
+        void RefreshAllTiles()
+        {
+            foreach (var c in Map.AllCells()) RefreshTile(c);
         }
 
         void OnDestroy()
@@ -82,6 +89,7 @@ namespace Bunker.Game
             World.DayEnded -= OnDayEnded;
             World.TileChanged -= RefreshTile;
             World.Salvaged -= OnSalvaged;
+            _game.DataChanged -= RefreshAllTiles;
         }
 
         Transform NewChild(string name)
@@ -139,7 +147,9 @@ namespace Bunker.Game
             switch (t.Ground)
             {
                 case Ground.Water: return (c.X + c.Y) % 3 == 0 ? Palette.WaterDeep : Palette.Water;
-                case Ground.Concrete: return alt ? Palette.Concrete : Palette.ConcreteAlt;
+                case Ground.Concrete:
+                    var concrete = alt ? Palette.Concrete : Palette.ConcreteAlt;
+                    return t.IsOvergrown ? Color.Lerp(concrete, Palette.Moss, 0.35f) : concrete; // weeds through the cracks
                 default:
                     if (t.IsOvergrown) return alt ? Palette.Moss : Palette.MossAlt;
                     return alt ? Palette.Soil : Palette.SoilAlt;
@@ -155,7 +165,7 @@ namespace Bunker.Game
             if (soil != null)
             {
                 soil.SetActive(t.Tilled && !t.IsOvergrown);
-                if (t.Tilled) Shapes.Recolor(soil, t.Watered ? Palette.TilledWet : Palette.Tilled);
+                if (t.Tilled) Shapes.Recolor(soil, SoilColor(t));
             }
 
             // Overgrowth and old tech.
@@ -166,8 +176,8 @@ namespace Bunker.Game
                 _debris[c.X, c.Y] = null;
             }
 
-            // Rebuild the crop model only when its look changes (watering alone doesn't).
-            int key = t.HasCrop ? IndexOf(t.Crop) * 1000 + (t.IsRipe ? 999 : t.Growth) : -1;
+            // Rebuild the crop model only when its look changes: a new growth stage (watering alone doesn't).
+            int key = t.HasCrop ? IndexOf(t.Crop) * 10 + t.Stage : -1;
             if (key == _cropKey[c.X, c.Y]) return;
             _cropKey[c.X, c.Y] = key;
             if (_crops[c.X, c.Y] != null)
@@ -176,6 +186,17 @@ namespace Bunker.Game
                 _crops[c.X, c.Y] = null;
             }
             if (t.HasCrop) _crops[c.X, c.Y] = BuildCrop(c, t);
+        }
+
+        /// <summary>Tilled soil darkens with water: dry, damp (time to water again), wet.</summary>
+        static Color SoilColor(Tile t)
+        {
+            switch (t.WetLevel)
+            {
+                case 2: return Palette.TilledWet;
+                case 1: return Palette.TilledDamp;
+                default: return Palette.Tilled;
+            }
         }
 
         static int IndexOf(CropType crop)
@@ -276,14 +297,14 @@ namespace Bunker.Game
                     Shapes.Box("Top", root, new Vector3(0f, 0.28f + size * 0.5f, 0f), new Vector3(0.1f, 0.12f, 0.1f), Palette.LeafDark, false);
                 }
             }
-            else if (t.Growth == 0)
+            else if (t.Stage <= 0)
             {
                 Shapes.Box("Seed", root, new Vector3(0f, 0.03f, 0f), new Vector3(0.18f, 0.06f, 0.18f), Palette.Shade(Palette.Tilled, 1.4f), false);
                 Shapes.Box("Sprout", root, new Vector3(0f, 0.08f, 0f), new Vector3(0.05f, 0.1f, 0.05f), Palette.Sprout, false);
             }
             else
             {
-                float k = t.Growth / (float)t.Crop.DaysToGrow;
+                float k = t.Stage / 4f;
                 float h = 0.12f + 0.3f * k;
                 Shapes.Box("Stem", root, new Vector3(0f, h * 0.5f, 0f), new Vector3(0.08f, h, 0.08f), Palette.Sprout, false);
                 Shapes.Box("Leaf L", root, new Vector3(-0.12f, h * 0.6f, 0f), new Vector3(0.22f, 0.05f, 0.14f), Palette.Leaf, false);
@@ -374,11 +395,13 @@ namespace Bunker.Game
             _placedPerCell.Clear();
             foreach (var b in World.Bots)
             {
+                if (b.IsPlayer) continue; // you're drawn wherever you actually are
                 _perCell.TryGetValue(b.Position, out int n);
                 _perCell[b.Position] = n + 1;
             }
             foreach (var kv in _botViews)
             {
+                if (kv.Key.IsPlayer) continue;
                 var pos = kv.Key.Position;
                 int count = _perCell[pos];
                 _placedPerCell.TryGetValue(pos, out int index);

@@ -117,10 +117,12 @@ namespace Bunker.Sim
                             Add(result, c, st, depth, false);
                             continue;
                         }
+                        int perTile = BotKinds.Stats(st.Kind).TicksPerTile;
                         while (Pathing.NextStep(map, dist, st.Pos, out var next, out var stepDir) && result.Steps.Count < MaxSteps)
                         {
                             st.Pos = next;
                             st.Dir = stepDir;
+                            for (int k = 1; k < perTile; k++) Add(result, c, st, depth, false); // crossing the tile
                             if (dist[next.X, next.Y] == 0) FaceTarget(st, c.Target);
                             Add(result, c, st, depth, false);
                         }
@@ -133,7 +135,11 @@ namespace Bunker.Sim
                         var next = st.Pos.Step(st.Dir);
                         bool blocked = !Open(st, next);
                         if (blocked) result.BlockedCount++;
-                        else st.Pos = next;
+                        else
+                        {
+                            st.Pos = next;
+                            for (int k = 1; k < BotKinds.Stats(st.Kind).TicksPerTile; k++) Add(result, c, st, depth, false);
+                        }
                         Add(result, c, st, depth, blocked);
                         continue;
                     }

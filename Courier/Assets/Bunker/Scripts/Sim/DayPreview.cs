@@ -79,7 +79,7 @@ namespace Bunker.Sim
         public int StartTick { get; private set; }
         public int EndTick { get; private set; }
 
-        /// <summary>Overnight results: sales, crops watered vs dry.</summary>
+        /// <summary>Nightfall results: deliveries, crops ripened today, and crops in wet vs dry soil.</summary>
         public DayReport Night { get; private set; }
 
         /// <param name="restarting">Bots that will restart their routine from line 1 when time runs again (edited mid-day).</param>

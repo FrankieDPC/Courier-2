@@ -35,6 +35,7 @@ namespace Bunker.Game
 
         // left panel
         Text _youText;
+        Text _guideText;
         RectTransform _botList;
         Text _noBots;
         readonly List<(Bot bot, Image bg, Text text)> _botButtons = new List<(Bot, Image, Text)>();
@@ -231,19 +232,26 @@ namespace Bunker.Game
             }
 
             SectionTitle(panel.transform, "Crops");
+            _guideText = UIFactory.Label("Guide", panel.transform, CropGuide(), 12, Palette.Ink);
+            _guideText.lineSpacing = 1.05f;
+
+            var help = UIFactory.Label("Help", panel.transform,
+                "WASD move - E use - Q seed - X dump water - Space pause\nClick a bot (or Tab) to program it - P preview\nF speed - C recentre - Right-drag look - Esc close", 11, Palette.InkSoft);
+            help.lineSpacing = 1.05f;
+        }
+
+        /// <summary>Crop stats as they are now (they can be tuned in the BunkerData asset).</summary>
+        static string CropGuide()
+        {
             var guide = new StringBuilder();
             foreach (var c in Crops.All)
             {
                 if (guide.Length > 0) guide.Append('\n');
-                guide.Append($"<b>{c.Name}</b>: {c.DaysToGrow} watered days, {c.Food} food, weighs {ItemInfo.Weight(c.Produce)}");
+                guide.Append($"<b>{c.Name}</b>: {c.GrowHours} wet hours, {c.Food} food, weighs {ItemInfo.Weight(c.Produce)}");
             }
+            guide.Append($"\nWater keeps soil wet for {Crops.WaterLastsHours} h; crops only grow while it's wet. Water again once it's damp.");
             guide.Append("\nWild seeds hide in weeds and thickets.");
-            var guideText = UIFactory.Label("Guide", panel.transform, guide.ToString(), 12, Palette.Ink);
-            guideText.lineSpacing = 1.05f;
-
-            var help = UIFactory.Label("Help", panel.transform,
-                "WASD move - E use - Q seed - Space pause\nClick a bot (or Tab) to program it - P preview\nF speed - C recentre - Right-drag look - Esc close", 11, Palette.InkSoft);
-            help.lineSpacing = 1.05f;
+            return guide.ToString();
         }
 
         static Color RecipeColor(Recipe r)
@@ -464,23 +472,28 @@ namespace Bunker.Game
             var p = World.Player;
             if (p != null)
             {
-                string load = p.IsCarrying ? $"carrying {p.Load} ({p.Load.Weight}/{p.Capacity})" : $"empty-handed (carries {p.Capacity})";
+                string bag = p.Load.HasBagItems ? $"bag {p.Load.Weight}/{p.Capacity}: {p.Load.BagText()}" : $"bag empty (holds {p.Capacity})";
                 string seed = PlayerController.SeedLabel(_game.Player != null ? _game.Player.SeedChoice : Item.None);
-                _youText.text = $"<b>{p.Name}</b>, {load}\n<color={UIFactory.Hex(Palette.InkSoft)}>Planting: {seed} (Q)</color>";
+                _youText.text = $"<b>{p.Name}</b>, {bag}\n<color={UIFactory.Hex(Palette.InkSoft)}>Seed pouch: {p.Load.SeedText()} - planting {seed} (Q)</color>";
             }
 
             foreach (var (b, bg, text) in _botButtons)
             {
-                string load = b.IsCarrying ? $"{b.Load.Weight}/{b.Capacity} {ShortName(b.Load.Main)}" : "empty";
+                string load = b.Load.HasBagItems ? $"{b.Load.Weight}/{b.Capacity} {ShortName(b.Load.Main)}" : "empty";
+                if (b.Load.HasSeeds) load += " + seeds";
                 string tag = b.Kind == BotKind.WaterBot ? $" <size=10><color={UIFactory.Hex(Palette.For(Item.Water))}>WATER</color></size>" : "";
                 text.text = $"{b.Name}{tag}\n<size=11><color={UIFactory.Hex(Palette.InkSoft)}>{load}</color></size>";
                 bg.color = b == _game.SelectedBot ? Palette.AccentSoft : Palette.Button;
             }
 
+            string guide = CropGuide();
+            if (_guideText.text != guide) _guideText.text = guide;
+
             foreach (var (recipe, button, text) in _recipeButtons)
             {
                 bool can = World.CanAfford(recipe);
-                string cost = GameController.CostText(World, recipe);
+                string locked = World.LockedReason(recipe);
+                string cost = locked ?? GameController.CostText(World, recipe);
                 string costColor = UIFactory.Hex(can ? Palette.Good : Palette.InkSoft);
                 text.text = $"{RecipeName(recipe)}\n<size=11><color={costColor}>{cost}</color></size>";
                 button.interactable = can;
@@ -500,7 +513,9 @@ namespace Bunker.Game
                 return;
             }
             var seed = _game.Player != null ? _game.Player.SeedChoice : Item.None;
-            _useHintText.text = UseText(World, p, seed);
+            string text = UseText(World, p, seed);
+            if (p.Load.Get(Item.Water) > 0) text += "     <b>[X]</b> dump water";
+            _useHintText.text = text;
         }
 
         static string UseText(World w, Bot p, Item seed)
@@ -519,7 +534,9 @@ namespace Bunker.Game
                     break;
                 case CommandType.Till: what = "Till soil"; break;
                 case CommandType.Plant: what = $"Plant {PlayerController.SeedLabel(seed)}"; break;
-                case CommandType.Water: what = t != null && t.Watered ? "Water (already watered)" : $"Water the {t?.Crop?.Name.ToLowerInvariant()}"; break;
+                case CommandType.Water:
+                    what = t != null && t.WellWatered ? "Water  <size=12>(still wet - wait till it's damp)</size>" : $"Water the {t?.Crop?.Name.ToLowerInvariant() ?? "soil"}";
+                    break;
                 case CommandType.Harvest: what = $"Harvest the {t?.Crop?.Name.ToLowerInvariant()}"; break;
                 case CommandType.Deliver: what = "Deliver your load to the bunker"; break;
                 case CommandType.Grab:
@@ -596,12 +613,34 @@ namespace Bunker.Game
             if (t.HasCrop)
             {
                 sb.Append($"\n{t.Crop.Name}: ");
-                sb.Append(t.IsRipe ? UIFactory.Colour("ripe - harvest it!", Palette.Good) : $"{t.Growth}/{t.Crop.DaysToGrow} watered days");
+                sb.Append(t.IsRipe
+                    ? UIFactory.Colour("ripe - harvest it!", Palette.Good)
+                    : $"{Mathf.FloorToInt(t.Grown01 * 100f)}% grown, {Hours(t.Crop.GrowTicks - t.Growth)} of wet soil to go");
             }
             else if (t.Tilled) sb.Append(" - ready to plant.");
             else sb.Append(" - till it before planting.");
-            if (t.HasCrop) sb.Append(t.Watered ? "  " + UIFactory.Colour("Watered today.", Palette.Water) : "  Dry.");
+            if (t.Tilled) sb.Append("\n").Append(Wetness(t));
             return sb.ToString();
+        }
+
+        /// <summary>"2.5 h" of in-game time for a number of ticks.</summary>
+        static string Hours(int ticks) => $"{Mathf.Max(0, ticks) / (float)Balance.TicksPerHour:0.#} h";
+
+        static string Wetness(Tile t)
+        {
+            switch (t.WetLevel)
+            {
+                case 2: return UIFactory.Colour($"Wet for {Hours(t.Moisture)} more.", Palette.Water);
+                case 1: return UIFactory.Colour($"Damp ({Hours(t.Moisture)} left) - water it again.", Palette.Warning);
+                default: return t.HasCrop && !t.IsRipe ? UIFactory.Colour("Dry - not growing.", Palette.Error) : "Dry.";
+            }
+        }
+
+        /// <summary>"bag 5/10: 5 water; seeds: 9 radish". Seeds ride in their own pouch and take no room.</summary>
+        public static string LoadText(Bot b)
+        {
+            string bag = b.Load.HasBagItems ? $"bag {b.Load.Weight}/{b.Capacity}: {b.Load.BagText()}" : $"bag empty (holds {b.Capacity})";
+            return b.Load.HasSeeds ? $"{bag}; seeds: {b.Load.SeedText()}" : bag;
         }
 
         static string ShortName(Item i) =>
@@ -609,7 +648,7 @@ namespace Bunker.Game
 
         static string Describe(Bot b)
         {
-            string load = b.IsCarrying ? $"carrying {b.Load} ({b.Load.Weight}/{b.Capacity})" : $"empty (carries up to {b.Capacity})";
+            string load = LoadText(b);
             string last = b.LastPath.Count > 0
                 ? $"line {b.LastPath[0].Index + 1}: {CommandInfo.Describe(b.LastResult)}"
                 : "waiting by the hatch";
